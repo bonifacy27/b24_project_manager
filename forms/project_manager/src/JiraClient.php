@@ -13,7 +13,7 @@ final class JiraClient
     {
         foreach (['base_url', 'username', 'password'] as $key) {
             if (empty($this->config[$key])) {
-                throw new RuntimeException('Интеграция с Jira не настроена. Заполните JIRA_BASE_URL, JIRA_USERNAME и JIRA_PASSWORD.');
+                throw new RuntimeException('Интеграция с Jira не настроена. Укажите адрес, логин и пароль в config.php.');
             }
         }
     }

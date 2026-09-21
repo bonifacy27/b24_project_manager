@@ -33,7 +33,7 @@ if (isset($APPLICATION)) {
 
         <div class="active-filters"><span>Исполнитель: Я <button>×</button></span><span>Только активные <button>×</button></span><button class="clear-filters">Сбросить</button></div>
 
-        <div class="integration-notice" id="integrationNotice" hidden><strong>Нужно подключить Jira</strong><span>Задайте константы <code>PROJECT_MANAGER_JIRA_URL</code>, <code>PROJECT_MANAGER_JIRA_LOGIN</code> и <code>PROJECT_MANAGER_JIRA_PASSWORD</code> в конфигурации Битрикс24.</span></div>
+        <div class="integration-notice" id="integrationNotice" hidden><strong>Нужно подключить Jira</strong><span>Укажите пароль пользователя <code>jiraService</code> в файле <code>/forms/project_manager/config.php</code>.</span></div>
         <div class="kanban" id="kanban">
           <section class="column" data-column="week"><header><div><span class="column-dot blue-dot"></span><h2>Эта неделя</h2><b>0</b></div><button aria-label="Меню колонки">•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
 
