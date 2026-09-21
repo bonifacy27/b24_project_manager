@@ -4,9 +4,24 @@ declare(strict_types=1);
 
 use ProjectManager\JiraClient;
 
+define('STOP_STATISTICS', true);
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_STATISTIC', true);
+
+$bitrixBootstrap = ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/bitrix/modules/main/include/prolog_before.php';
+if (is_file($bitrixBootstrap)) {
+    require_once $bitrixBootstrap;
+}
+
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
+
+if (isset($USER) && is_object($USER) && !$USER->IsAuthorized()) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Требуется авторизация в Битрикс24.'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);

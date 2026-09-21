@@ -47,7 +47,7 @@ async function loadIssues() {
   columns.forEach(column => { column.querySelector('.cards').innerHTML = '<div class="loading-card"></div><div class="loading-card"></div>'; });
 
   try {
-    const response = await fetch('api/issues.php', { headers: { Accept: 'application/json' } });
+    const response = await fetch('/forms/project_manager/api/issues.php', { headers: { Accept: 'application/json' } });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
 
@@ -68,13 +68,15 @@ async function loadIssues() {
     const total = Object.values(data.totals).reduce((sum, value) => sum + Number(value), 0);
     document.querySelector('[data-project="all"] b').textContent = total;
     document.querySelector('#activeTotal').textContent = total;
-    document.querySelector('#syncStatus').textContent = `Синхронизировано ${new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date(data.syncedAt))}`;
+    document.querySelector('#weekTotal').textContent = data.issues.filter(issue => targetColumn(issue) === 'week').length;
+    document.querySelector('#waitingTotal').textContent = data.issues.filter(issue => /ожида|waiting|pending/i.test(issue.status)).length;
+    const today = new Date().toISOString().slice(0, 10);
+    document.querySelector('#updatedTotal').textContent = data.issues.filter(issue => issue.updated.slice(0, 10) === today).length;
     jiraCards = [...document.querySelectorAll('.task-card')];
     bindCardLinks();
   } catch (error) {
     columns.forEach(column => { column.querySelector('.cards').innerHTML = `<div class="error-card"><strong>Не удалось загрузить задачи</strong><br>${escapeHtml(error.message)}</div>`; });
     document.querySelector('#integrationNotice').hidden = false;
-    document.querySelector('#syncStatus').textContent = 'Нет подключения';
   }
 }
 
