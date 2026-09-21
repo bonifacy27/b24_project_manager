@@ -77,12 +77,25 @@ function updateSummary(totals = {}) {
   document.querySelector('#updatedTotal').textContent = state.issues.filter(issue => issue.updated?.slice(0, 10) === today).length;
 }
 
+async function readApiResponse(response) {
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    const isHtml = /^\s*(?:<!doctype|<html)/i.test(body);
+    const message = isHtml
+      ? `API вернул HTML вместо JSON (HTTP ${response.status}). Проверьте журнал PHP/Bitrix.`
+      : `API вернул некорректный ответ (HTTP ${response.status}).`;
+    throw new Error(message, { cause: error });
+  }
+}
+
 async function loadIssues() {
   document.querySelector('#integrationNotice').hidden = true;
   document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = '<div class="loading-card"></div><div class="loading-card"></div>'; });
   try {
     const response = await fetch('/forms/project_manager/api/issues.php', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-    const data = await response.json();
+    const data = await readApiResponse(response);
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
     state.issues = Array.isArray(data.issues) ? data.issues : [];
     updateSummary(data.totals || {});
@@ -120,7 +133,7 @@ form.addEventListener('submit', async event => {
     const response = await fetch('/forms/project_manager/api/issues.php', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(values)
     });
-    const data = await response.json();
+    const data = await readApiResponse(response);
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
     closeModal(); form.reset();
     showToast(`Заявка ${data.issue.key} создана`, 'Доска обновлена');

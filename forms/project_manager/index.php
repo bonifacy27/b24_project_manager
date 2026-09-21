@@ -31,7 +31,7 @@ if (isset($APPLICATION)) {
           <div class="view-actions"><label class="issue-search" aria-label="Поиск заявок"><span>⌕</span><input id="searchInput" type="search" placeholder="Поиск"></label><button class="btn tertiary" id="refreshBtn" type="button">↻ <span>Обновить</span></button><div class="view-switch"><button class="active" type="button" data-view="board" aria-label="Канбан">▦</button><button type="button" data-view="list" aria-label="Список">☷</button></div></div>
         </div>
 
-        <div class="integration-notice" id="integrationNotice" hidden><strong>Нужно подключить Jira</strong><span>Укажите пароль пользователя <code>jiraService</code> в файле <code>/forms/project_manager/config.php</code>.</span></div>
+        <div class="integration-notice" id="integrationNotice" hidden><strong>Ошибка загрузки Jira</strong><span>Подробности показаны в колонках ниже.</span></div>
         <div class="kanban" id="kanban">
           <section class="column" data-column="week"><header><div><span class="column-dot blue-dot"></span><h2>Эта неделя</h2><b>0</b></div><button aria-label="Меню колонки">•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
 
@@ -43,7 +43,7 @@ if (isset($APPLICATION)) {
 </div>
 <div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">＋</div><h2 id="modalTitle">Новая заявка</h2><p>Заявка будет создана в Jira и появится на доске.</p><form id="issueForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><label>Название<input required maxlength="255" name="title" placeholder="Кратко опишите задачу"></label><div class="form-row"><label>Проект<select name="project"><option value="ods">ODS</option><option value="ssis">SSIS</option></select></label><label>План<select name="plan"><option value="week">Эта неделя</option><option value="next">Следующая неделя</option><option value="later">Позже</option></select></label></div><label>Описание<textarea name="description" maxlength="10000" placeholder="Добавьте детали задачи"></textarea></label><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Создать заявку</button></div></form></div></div>
   <div class="toast" id="toast"><span>✓</span><div><strong>Заявка создана</strong><small>Синхронизация с Jira запущена</small></div></div>
-<script src="/forms/project_manager/app.js?v=4"></script>
+<script src="/forms/project_manager/app.js?v=5"></script>
 <?php
 if (is_file($bitrixFooter)) {
     require $bitrixFooter;

@@ -7,11 +7,17 @@ use ProjectManager\JiraClient;
 define('STOP_STATISTICS', true);
 define('NO_KEEP_STATISTIC', true);
 define('NO_AGENT_STATISTIC', true);
+define('PUBLIC_AJAX_MODE', true);
+
+// Some Bitrix installations print service markup while loading the prolog.
+// It must never become part of an API response.
+ob_start();
 
 $bitrixBootstrap = ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/bitrix/modules/main/include/prolog_before.php';
 if (is_file($bitrixBootstrap)) {
     require_once $bitrixBootstrap;
 }
+ob_end_clean();
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');

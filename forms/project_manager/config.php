@@ -6,7 +6,7 @@ return [
     'jira' => [
         'base_url' => 'https://jira.tricolor.tv',
         'username' => 'jiraService',
-        // Укажите пароль пользователя jiraService между кавычками.
+        // Пароль задаётся в переменной окружения JIRA_PASSWORD.
         'password' => getenv('JIRA_PASSWORD') ?: '',
         'timeout' => 20,
         'verify_ssl' => true,
