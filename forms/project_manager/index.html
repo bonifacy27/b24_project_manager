@@ -19,7 +19,7 @@
         <a href="#"><span class="nav-icon">⚙</span><span>Интеграции</span></a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sync-mini"><span class="status-dot"></span><div><strong>Jira подключена</strong><small>Синхронизация 5 мин назад</small></div></div>
+        <div class="sync-mini"><span class="status-dot"></span><div><strong>Jira подключена</strong><small id="syncStatus">Загрузка задач…</small></div></div>
         <div class="user"><div class="avatar">АК</div><div><strong>Алексей Ковалёв</strong><small>Администратор</small></div><button>•••</button></div>
       </div>
     </aside>
@@ -38,7 +38,7 @@
         </div>
 
         <div class="stats" aria-label="Сводка">
-          <article><div class="stat-icon blue">▤</div><div><span>Всего в работе</span><strong>24</strong><small class="positive">↗ 3 за неделю</small></div></article>
+          <article><div class="stat-icon blue">▤</div><div><span>Всего в работе</span><strong id="activeTotal">24</strong><small>ODS и SSIS</small></div></article>
           <article><div class="stat-icon violet">◷</div><div><span>На этой неделе</span><strong>8</strong><small>3 с высоким приоритетом</small></div></article>
           <article><div class="stat-icon orange">⚑</div><div><span>Ожидают ответа</span><strong>5</strong><small>Самая старая — 4 дня</small></div></article>
           <article><div class="stat-icon green">✓</div><div><span>Завершено</span><strong>12</strong><small class="positive">↗ 20% к прошлой неделе</small></div></article>
@@ -51,6 +51,7 @@
 
         <div class="active-filters"><span>Исполнитель: Я <button>×</button></span><span>Только активные <button>×</button></span><button class="clear-filters">Сбросить</button></div>
 
+        <div class="integration-notice" id="integrationNotice" hidden><strong>Нужно подключить Jira</strong><span>Скопируйте <code>.env.example</code> в <code>.env</code> и укажите учётные данные интеграции.</span></div>
         <div class="kanban" id="kanban">
           <section class="column" data-column="week"><header><div><span class="column-dot blue-dot"></span><h2>Эта неделя</h2><b>4</b></div><button aria-label="Меню колонки">•••</button></header><div class="cards">
             <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-95192</span><span class="priority high">● Высокий</span></div><h3>Заявка на подбор — доработка</h3><p>Добавление новых полей в подбор и оффер, переработка БП</p><div class="tags"><span>Разработка</span><span>Битрикс24</span></div><div class="card-meta"><span class="assignee" title="Алексей Ковалёв">АК</span><span>◴ 29 мая</span><span>▱ 4</span></div></article>
