@@ -3,6 +3,10 @@ const toast = document.querySelector('#toast');
 const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const state = { issues: [], project: 'all', query: '', view: 'board' };
+const apiUrl = new URL(window.location.href);
+apiUrl.search = '';
+apiUrl.hash = '';
+apiUrl.searchParams.set('project_manager_api', 'issues');
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -94,7 +98,7 @@ async function loadIssues() {
   document.querySelector('#integrationNotice').hidden = true;
   document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = '<div class="loading-card"></div><div class="loading-card"></div>'; });
   try {
-    const response = await fetch('/forms/project_manager/api/issues.php', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+    const response = await fetch(apiUrl, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
     const data = await readApiResponse(response);
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
     state.issues = Array.isArray(data.issues) ? data.issues : [];
@@ -130,7 +134,7 @@ form.addEventListener('submit', async event => {
   submit.disabled = true; submit.textContent = 'Создаём…'; errorBox.hidden = true;
   try {
     const values = Object.fromEntries(new FormData(form));
-    const response = await fetch('/forms/project_manager/api/issues.php', {
+    const response = await fetch(apiUrl, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(values)
     });
     const data = await readApiResponse(response);

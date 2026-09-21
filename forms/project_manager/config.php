@@ -32,7 +32,7 @@ $getGlobalConstant = static function (string $id): array {
 
 $jiraLogin = $getGlobalConstant('Constant1737353139590');
 $jiraPassword = $getGlobalConstant('Constant1790002602578');
-$credentialErrors = array_filter([$jiraLogin['error'], $jiraPassword['error']]);
+$credentialErrors = array_unique(array_filter([$jiraLogin['error'], $jiraPassword['error']]));
 
 return [
     'jira' => [

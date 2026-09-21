@@ -2,6 +2,13 @@
 
 declare(strict_types=1);
 
+// Serve the JSON API through the page entry point. Some Bitrix installations
+// deny direct requests to PHP files in nested directories with HTTP 404.
+if (($_GET['project_manager_api'] ?? '') === 'issues') {
+    require __DIR__ . '/api/issues.php';
+    exit;
+}
+
 $bitrixHeader = ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/bitrix/header.php';
 $bitrixFooter = ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/bitrix/footer.php';
 if (is_file($bitrixHeader)) {
@@ -43,7 +50,7 @@ if (isset($APPLICATION)) {
 </div>
 <div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">＋</div><h2 id="modalTitle">Новая заявка</h2><p>Заявка будет создана в Jira и появится на доске.</p><form id="issueForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><label>Название<input required maxlength="255" name="title" placeholder="Кратко опишите задачу"></label><div class="form-row"><label>Проект<select name="project"><option value="ods">ODS</option><option value="ssis">SSIS</option></select></label><label>План<select name="plan"><option value="week">Эта неделя</option><option value="next">Следующая неделя</option><option value="later">Позже</option></select></label></div><label>Описание<textarea name="description" maxlength="10000" placeholder="Добавьте детали задачи"></textarea></label><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Создать заявку</button></div></form></div></div>
   <div class="toast" id="toast"><span>✓</span><div><strong>Заявка создана</strong><small>Синхронизация с Jira запущена</small></div></div>
-<script src="/forms/project_manager/app.js?v=5"></script>
+<script src="/forms/project_manager/app.js?v=6"></script>
 <?php
 if (is_file($bitrixFooter)) {
     require $bitrixFooter;
