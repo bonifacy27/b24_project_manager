@@ -9,6 +9,9 @@ use RuntimeException;
 
 final class JiraClient
 {
+    /** @var array<string, mixed> */
+    private array $diagnostics = [];
+
     public function __construct(private readonly array $config)
     {
         if (!empty($this->config['credentials_error'])) {
@@ -19,6 +22,22 @@ final class JiraClient
                 throw new RuntimeException('Интеграция с Jira не настроена: отсутствует параметр ' . $key . '.');
             }
         }
+        $password = (string) $this->config['password'];
+        $this->diagnostics = [
+            'baseUrl' => (string) $this->config['base_url'],
+            'username' => (string) $this->config['username'],
+            // Never send a reusable password to a browser. Length and a short
+            // fingerprint are enough to verify which constant was decoded.
+            'password' => str_repeat('•', min(strlen($password), 12)),
+            'passwordLength' => strlen($password),
+            'passwordFingerprint' => substr(hash('sha256', $password), 0, 12),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function getDiagnostics(): array
+    {
+        return $this->diagnostics;
     }
 
     /** @return array{issues: list<array<string, mixed>>, total: int} */
@@ -84,8 +103,24 @@ final class JiraClient
 
         $body = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $contentType = (string) curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
         $curlError = curl_error($handle);
         curl_close($handle);
+
+        $responseBody = (string) $body;
+        foreach ([(string) $this->config['username'], (string) $this->config['password']] as $secret) {
+            if ($secret !== '') {
+                $responseBody = str_replace($secret, '[hidden]', $responseBody);
+            }
+        }
+        $this->diagnostics = array_merge($this->diagnostics, [
+            'method' => $method,
+            'url' => $url,
+            'httpStatus' => $status,
+            'contentType' => $contentType,
+            'curlError' => $curlError,
+            'jiraResponse' => mb_substr($responseBody, 0, 4000),
+        ]);
 
         if ($body === false) {
             throw new RuntimeException('Не удалось подключиться к Jira: ' . $curlError);

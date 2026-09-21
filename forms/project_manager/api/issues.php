@@ -46,6 +46,7 @@ if (!in_array($project, ['all', 'ods', 'ssis'], true)) {
     exit;
 }
 
+$client = null;
 try {
     $client = new JiraClient($config['jira']);
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -95,5 +96,8 @@ try {
 } catch (Throwable $exception) {
     $status = $exception instanceof InvalidArgumentException ? 422 : (in_array($exception->getCode(), [401, 403], true) ? $exception->getCode() : 502);
     http_response_code($status);
-    echo json_encode(['error' => $exception->getMessage()], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    echo json_encode([
+        'error' => $exception->getMessage(),
+        'diagnostics' => $client instanceof JiraClient ? $client->getDiagnostics() : null,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }

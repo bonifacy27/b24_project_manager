@@ -94,14 +94,32 @@ async function readApiResponse(response) {
   }
 }
 
+function showDiagnostics(diagnostics) {
+  const panel = document.querySelector('#jiraDiagnostics');
+  if (!diagnostics) { panel.hidden = true; return; }
+  const labels = {
+    baseUrl: 'Jira URL', username: 'Логин', password: 'Пароль (маска)', passwordLength: 'Длина пароля',
+    passwordFingerprint: 'SHA-256 (первые 12)', method: 'Метод', url: 'Запрос Jira', httpStatus: 'HTTP статус',
+    contentType: 'Content-Type', curlError: 'cURL', jiraResponse: 'Ответ Jira'
+  };
+  panel.querySelector('pre').textContent = Object.entries(diagnostics)
+    .map(([key, value]) => `${labels[key] || key}: ${value === '' ? '—' : value}`)
+    .join('\n');
+  panel.hidden = false;
+}
+
 async function loadIssues() {
   document.querySelector('#integrationNotice').hidden = true;
   document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = '<div class="loading-card"></div><div class="loading-card"></div>'; });
   try {
     const response = await fetch(apiUrl, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
     const data = await readApiResponse(response);
-    if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
+    if (!response.ok) {
+      showDiagnostics(data.diagnostics);
+      throw new Error(data.error || `Ошибка Jira (${response.status})`);
+    }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
+    showDiagnostics(null);
     updateSummary(data.totals || {});
     render();
   } catch (error) {
@@ -138,7 +156,10 @@ form.addEventListener('submit', async event => {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(values)
     });
     const data = await readApiResponse(response);
-    if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
+    if (!response.ok) {
+      showDiagnostics(data.diagnostics);
+      throw new Error(data.error || `Ошибка Jira (${response.status})`);
+    }
     closeModal(); form.reset();
     showToast(`Заявка ${data.issue.key} создана`, 'Доска обновлена');
     await loadIssues();
