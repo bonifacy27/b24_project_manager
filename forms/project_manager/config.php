@@ -63,8 +63,8 @@ $getGlobalConstant = static function (string $id) use ($decodeStoredConstant): a
     }
 };
 
-$jiraLogin = $getGlobalConstant('Constant1737353139590');
-$jiraPassword = $getGlobalConstant('Constant1790002602578');
+$jiraLogin = $getGlobalConstant('Constant1790002602578');
+$jiraPassword = $getGlobalConstant('Constant1737353139590');
 $credentialErrors = array_unique(array_filter([$jiraLogin['error'], $jiraPassword['error']]));
 
 return [
