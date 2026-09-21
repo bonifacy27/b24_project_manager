@@ -11,9 +11,12 @@ final class JiraClient
 {
     public function __construct(private readonly array $config)
     {
+        if (!empty($this->config['credentials_error'])) {
+            throw new RuntimeException('Не удалось получить учётные данные Jira: ' . $this->config['credentials_error']);
+        }
         foreach (['base_url', 'username', 'password'] as $key) {
             if (empty($this->config[$key])) {
-                throw new RuntimeException('Интеграция с Jira не настроена. Укажите адрес, логин и пароль в config.php.');
+                throw new RuntimeException('Интеграция с Jira не настроена: отсутствует параметр ' . $key . '.');
             }
         }
     }

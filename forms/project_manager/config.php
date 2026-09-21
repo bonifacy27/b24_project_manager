@@ -2,12 +2,44 @@
 
 declare(strict_types=1);
 
+use Bitrix\Main\Application;
+
+/** @return array{value: string, error: string} */
+$getGlobalConstant = static function (string $id): array {
+    try {
+        if (!class_exists(Application::class)) {
+            throw new RuntimeException('Ядро Bitrix не загружено.');
+        }
+        if (!function_exists('fwDiagDecodeConstant')) {
+            throw new RuntimeException('Функция fwDiagDecodeConstant() не найдена.');
+        }
+
+        $connection = Application::getConnection();
+        $safeId = $connection->getSqlHelper()->forSql($id);
+        $row = $connection
+            ->query("SELECT PROPERTY_VALUE FROM b_bp_global_const WHERE ID = '" . $safeId . "'")
+            ->fetch();
+        $value = trim((string) fwDiagDecodeConstant($row['PROPERTY_VALUE'] ?? ''));
+
+        return [
+            'value' => $value,
+            'error' => $value === '' ? 'Глобальная константа ' . $id . ' пуста или не найдена.' : '',
+        ];
+    } catch (Throwable $exception) {
+        return ['value' => '', 'error' => $exception->getMessage()];
+    }
+};
+
+$jiraLogin = $getGlobalConstant('Constant1737353139590');
+$jiraPassword = $getGlobalConstant('Constant1790002602578');
+$credentialErrors = array_filter([$jiraLogin['error'], $jiraPassword['error']]);
+
 return [
     'jira' => [
         'base_url' => 'https://jira.tricolor.tv',
-        'username' => 'jiraService',
-        // Пароль задаётся в переменной окружения JIRA_PASSWORD.
-        'password' => getenv('JIRA_PASSWORD') ?: '',
+        'username' => $jiraLogin['value'],
+        'password' => $jiraPassword['value'],
+        'credentials_error' => implode(' ', $credentialErrors),
         'timeout' => 20,
         'verify_ssl' => true,
         'jql' => [
