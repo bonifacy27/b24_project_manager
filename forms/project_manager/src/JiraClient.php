@@ -35,7 +35,29 @@ final class JiraClient
     }
 
     /** @return array<string, mixed> */
-    private function request(string $method, string $path, array $query = []): array
+    public function createIssue(string $projectKey, string $issueType, string $summary, string $description, ?string $dueDate): array
+    {
+        $fields = [
+            'project' => ['key' => $projectKey],
+            'issuetype' => ['name' => $issueType],
+            'summary' => $summary,
+            'description' => $description,
+        ];
+        if ($dueDate !== null) {
+            $fields['duedate'] = $dueDate;
+        }
+
+        $created = $this->request('POST', '/rest/api/2/issue', [], ['fields' => $fields]);
+        $key = (string) ($created['key'] ?? '');
+        if ($key === '') {
+            throw new RuntimeException('Jira не вернула ключ созданной заявки.');
+        }
+
+        return ['key' => $key, 'url' => $this->config['base_url'] . '/browse/' . rawurlencode($key)];
+    }
+
+    /** @return array<string, mixed> */
+    private function request(string $method, string $path, array $query = [], ?array $payload = null): array
     {
         $url = $this->config['base_url'] . $path;
         if ($query !== []) {
@@ -48,11 +70,14 @@ final class JiraClient
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
             CURLOPT_USERPWD => $this->config['username'] . ':' . $this->config['password'],
-            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_HTTPHEADER => ['Accept: application/json', 'Content-Type: application/json'],
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_TIMEOUT => (int) ($this->config['timeout'] ?? 20),
             CURLOPT_SSL_VERIFYPEER => (bool) ($this->config['verify_ssl'] ?? true),
         ]);
+        if ($payload !== null) {
+            curl_setopt($handle, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        }
 
         $body = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
@@ -66,7 +91,10 @@ final class JiraClient
             throw new RuntimeException('Jira отклонила учётные данные интеграции.', $status);
         }
         if ($status < 200 || $status >= 300) {
-            throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . '.', $status);
+            $details = json_decode((string) $body, true);
+            $messages = array_merge($details['errorMessages'] ?? [], array_values($details['errors'] ?? []));
+            $suffix = $messages ? ': ' . implode('; ', array_map('strval', $messages)) : '';
+            throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . $suffix . '.', $status);
         }
 
         try {
