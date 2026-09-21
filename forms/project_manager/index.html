@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f7f8fa">
+  <title>Проекты — Битрикс24</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Главное меню">
+      <a class="brand" href="#" aria-label="Битрикс24"><span class="brand-mark">Б</span><span>Битрикс<span>24</span></span></a>
+      <nav class="main-nav">
+        <a href="#"><span class="nav-icon">⌂</span><span>Главная</span></a>
+        <a href="#"><span class="nav-icon">✓</span><span>Задачи</span><b class="nav-count">5</b></a>
+        <a class="active" href="#"><span class="nav-icon">▦</span><span>Проекты</span></a>
+        <a href="#"><span class="nav-icon">◎</span><span>Отчёты</span></a>
+        <a href="#"><span class="nav-icon">⚙</span><span>Интеграции</span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sync-mini"><span class="status-dot"></span><div><strong>Jira подключена</strong><small>Синхронизация 5 мин назад</small></div></div>
+        <div class="user"><div class="avatar">АК</div><div><strong>Алексей Ковалёв</strong><small>Администратор</small></div><button>•••</button></div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button class="menu-button" aria-label="Открыть меню">☰</button>
+        <label class="search"><span>⌕</span><input type="search" id="searchInput" placeholder="Найти задачу по ключу или названию"><kbd>⌘ K</kbd></label>
+        <div class="top-actions"><button class="icon-button" aria-label="Помощь">?</button><button class="icon-button notification" aria-label="Уведомления">♢<i></i></button><button class="avatar small">АК</button></div>
+      </header>
+
+      <section class="content">
+        <div class="page-heading">
+          <div><div class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</div><h1>Проекты</h1><p>Планируйте работу и следите за заявками из Jira</p></div>
+          <div class="heading-actions"><button class="btn secondary" id="reportBtn"><span>↗</span> Создать отчёт</button><button class="btn primary" id="createBtn"><span>＋</span> Новая заявка</button></div>
+        </div>
+
+        <div class="stats" aria-label="Сводка">
+          <article><div class="stat-icon blue">▤</div><div><span>Всего в работе</span><strong>24</strong><small class="positive">↗ 3 за неделю</small></div></article>
+          <article><div class="stat-icon violet">◷</div><div><span>На этой неделе</span><strong>8</strong><small>3 с высоким приоритетом</small></div></article>
+          <article><div class="stat-icon orange">⚑</div><div><span>Ожидают ответа</span><strong>5</strong><small>Самая старая — 4 дня</small></div></article>
+          <article><div class="stat-icon green">✓</div><div><span>Завершено</span><strong>12</strong><small class="positive">↗ 20% к прошлой неделе</small></div></article>
+        </div>
+
+        <div class="toolbar">
+          <div class="project-tabs" role="tablist"><button class="active" data-project="all">Все проекты <b>24</b></button><button data-project="ods"><span class="project-dot ods"></span> ODS <b>15</b></button><button data-project="ssis"><span class="project-dot ssis"></span> SSIS <b>9</b></button></div>
+          <div class="view-actions"><button class="btn tertiary" id="filterBtn">≡ <span>Фильтры</span><i class="filter-count">2</i></button><div class="view-switch"><button class="active" aria-label="Канбан">▦</button><button aria-label="Список">☷</button></div></div>
+        </div>
+
+        <div class="active-filters"><span>Исполнитель: Я <button>×</button></span><span>Только активные <button>×</button></span><button class="clear-filters">Сбросить</button></div>
+
+        <div class="kanban" id="kanban">
+          <section class="column" data-column="week"><header><div><span class="column-dot blue-dot"></span><h2>Эта неделя</h2><b>4</b></div><button aria-label="Меню колонки">•••</button></header><div class="cards">
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-95192</span><span class="priority high">● Высокий</span></div><h3>Заявка на подбор — доработка</h3><p>Добавление новых полей в подбор и оффер, переработка БП</p><div class="tags"><span>Разработка</span><span>Битрикс24</span></div><div class="card-meta"><span class="assignee" title="Алексей Ковалёв">АК</span><span>◴ 29 мая</span><span>▱ 4</span></div></article>
+            <article class="task-card" data-project="ssis" tabindex="0"><div class="card-top"><span class="key ssis-key">SSIS-2111</span><span class="priority medium">● Средний</span></div><h3>Переработка заявки на подбор</h3><p>Добавление новых полей, редактор заявки</p><div class="linked">↗ Связана с ODS-95192</div><div class="card-meta"><span class="assignee coral">ЕМ</span><span>◴ 30 мая</span><span>▱ 2</span></div></article>
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-97472</span><span class="priority low">● Низкий</span></div><h3>Учёт сверхурочных работ</h3><p>Разработка бизнес-процесса и формы</p><div class="card-meta"><span class="assignee teal">МИ</span><span>◴ 31 мая</span><span>▱ 1</span></div></article>
+          </div><button class="add-card">＋ Добавить задачу</button></section>
+
+          <section class="column" data-column="next"><header><div><span class="column-dot violet-dot"></span><h2>Следующая неделя</h2><b>3</b></div><button>•••</button></header><div class="cards">
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-97005</span><span class="priority high">● Высокий</span></div><h3>Доработки заявок на выпуск и отзыв доверенностей</h3><p>Разработка бизнес-процесса</p><div class="tags"><span>Разработка</span></div><div class="card-meta"><span class="assignee">АК</span><span>◴ 5 июня</span><span>▱ 6</span></div></article>
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-99465</span><span class="priority medium">● Средний</span></div><h3>Доработки заявок на выпуск</h3><p>Новая форма заявки и обновление списка</p><div class="card-meta"><span class="assignee purple">ОС</span><span>◴ 6 июня</span><span>▱ 3</span></div></article>
+            <article class="task-card" data-project="ssis" tabindex="0"><div class="card-top"><span class="key ssis-key">SSIS-3740</span><span class="priority low">● Низкий</span></div><h3>Устранение создания дублей отпусков</h3><p>Переписать интеграцию с контролем дублей</p><div class="linked">↗ Связана с ODS-97005</div><div class="card-meta"><span class="assignee coral">ЕМ</span><span>◴ 7 июня</span><span>▱ 2</span></div></article>
+          </div><button class="add-card">＋ Добавить задачу</button></section>
+
+          <section class="column" data-column="later"><header><div><span class="column-dot orange-dot"></span><h2>Позже</h2><b>5</b></div><button>•••</button></header><div class="cards">
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-5275</span><span class="year-tag">2026</span></div><h3>Разворачивание DEV на новой площадке</h3><p>Подготовка стенда для репетиции переезда PROD</p><div class="tags"><span>Инфраструктура</span></div><div class="card-meta"><span class="assignee teal">МИ</span><span>IV квартал</span><span>▱ 8</span></div></article>
+            <article class="task-card" data-project="ods" tabindex="0"><div class="card-top"><span class="key ods-key">ODS-2984</span><span class="year-tag">2026</span></div><h3>Заявка на выпуск POS-материалов</h3><p>Анализ требований и подготовка прототипа</p><div class="card-meta"><span class="assignee purple">ОС</span><span>Ноябрь</span><span>▱ 1</span></div></article>
+            <article class="task-card" data-project="ssis" tabindex="0"><div class="card-top"><span class="key ssis-key">SSIS-1538</span><span class="year-tag">2027</span></div><h3>Раздел с аватарками сотрудников</h3><p>Задача в бэклоге, ожидает приоритизации</p><div class="card-meta"><span class="assignee coral">ЕМ</span><span>Без срока</span><span>▱ 0</span></div></article>
+          </div><button class="add-card">＋ Добавить задачу</button></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true"><button class="modal-close" aria-label="Закрыть">×</button><div class="modal-icon">＋</div><h2>Новая заявка</h2><p>Создайте заявку проекта ODS — она автоматически появится в Jira.</p><form id="issueForm"><label>Название<input required name="title" placeholder="Кратко опишите задачу"></label><div class="form-row"><label>Проект<select name="project"><option>ODS — внутренний проект</option><option>SSIS — внешний проект</option></select></label><label>План<select name="plan"><option>Эта неделя</option><option>Следующая неделя</option><option>Позже</option></select></label></div><label>Описание<textarea name="description" placeholder="Добавьте детали задачи"></textarea></label><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Создать заявку</button></div></form></div></div>
+  <div class="toast" id="toast"><span>✓</span><div><strong>Заявка создана</strong><small>Синхронизация с Jira запущена</small></div></div>
+  <script src="app.js"></script>
+</body>
+</html>
