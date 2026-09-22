@@ -53,7 +53,7 @@ final class JiraClient
                 'jql' => $jql,
                 'startAt' => $startAt,
                 'maxResults' => $pageSize,
-                'fields' => 'summary,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+                'fields' => 'summary,description,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
             ]);
             $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
             $issues = [...$issues, ...$page];
@@ -68,7 +68,15 @@ final class JiraClient
     }
 
     /** @return array<string, mixed> */
-    public function createIssue(string $projectKey, string $issueType, string $summary, string $description, ?string $dueDate): array
+    public function createIssue(
+        string $projectKey,
+        string $issueType,
+        string $summary,
+        string $description,
+        ?string $dueDate,
+        ?string $componentId = null,
+        ?string $fixVersionId = null
+    ): array
     {
         $fields = [
             'project' => ['key' => $projectKey],
@@ -79,6 +87,12 @@ final class JiraClient
         if ($dueDate !== null) {
             $fields['duedate'] = $dueDate;
         }
+        if ($componentId !== null) {
+            $fields['components'] = [['id' => $componentId]];
+        }
+        if ($fixVersionId !== null) {
+            $fields['fixVersions'] = [['id' => $fixVersionId]];
+        }
 
         $created = $this->request('POST', '/rest/api/2/issue', [], ['fields' => $fields]);
         $key = (string) ($created['key'] ?? '');
@@ -87,6 +101,74 @@ final class JiraClient
         }
 
         return ['key' => $key, 'url' => $this->config['base_url'] . '/browse/' . rawurlencode($key)];
+    }
+
+    /** @return array{components: list<array{id: string, name: string}>, versions: list<array{id: string, name: string}>} */
+    public function getCreateOptions(string $projectKey): array
+    {
+        $encodedKey = rawurlencode($projectKey);
+        $components = $this->request('GET', '/rest/api/2/project/' . $encodedKey . '/components');
+        $versions = $this->request('GET', '/rest/api/2/project/' . $encodedKey . '/versions');
+
+        $normalise = static fn (array $item): array => [
+            'id' => (string) ($item['id'] ?? ''),
+            'name' => (string) ($item['name'] ?? ''),
+        ];
+        $availableVersions = array_filter(
+            $versions,
+            static fn (mixed $version): bool => is_array($version)
+                && empty($version['archived'])
+                && empty($version['released'])
+        );
+
+        return [
+            'components' => array_values(array_map($normalise, array_filter($components, 'is_array'))),
+            'versions' => array_values(array_map($normalise, $availableVersions)),
+        ];
+    }
+
+    /** @return array{key: string, status: string} */
+    public function completeIssue(string $issueKey, string $comment): array
+    {
+        $issueKey = strtoupper(trim($issueKey));
+        $comment = trim($comment);
+        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
+            throw new \InvalidArgumentException('Неверно указан ключ Jira.');
+        }
+        if ($comment === '' || mb_strlen($comment) > 10000) {
+            throw new \InvalidArgumentException('Для выполнения заявки укажите комментарий длиной до 10000 символов.');
+        }
+
+        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), ['fields' => 'status']);
+        $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
+        if (!in_array(mb_strtolower(trim($currentStatus)), ['уточнение информации', 'взят в работу'], true)) {
+            throw new \InvalidArgumentException(
+                'Выполнить заявку можно только из статусов «Уточнение информации» или «Взят в работу».'
+            );
+        }
+
+        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', ['expand' => 'transitions.fields']);
+        $transitions = is_array($response['transitions'] ?? null) ? $response['transitions'] : [];
+        $transition = null;
+        foreach ($transitions as $candidate) {
+            $targetName = (string) ($candidate['to']['name'] ?? '');
+            $category = (string) ($candidate['to']['statusCategory']['key'] ?? '');
+            if ($category === 'done' || preg_match('/выполн|закры|решен/iu', $targetName)) {
+                $transition = $candidate;
+                break;
+            }
+        }
+        $transitionId = (string) ($transition['id'] ?? '');
+        if ($transitionId === '') {
+            throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
+        }
+
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', [], [
+            'transition' => ['id' => $transitionId],
+            'update' => ['comment' => [['add' => ['body' => $comment]]]],
+        ]);
+
+        return ['key' => $issueKey, 'status' => (string) ($transition['to']['name'] ?? 'Выполнено')];
     }
 
     /** @return array<string, mixed> */
@@ -145,6 +227,9 @@ final class JiraClient
             $suffix = $messages ? ': ' . implode('; ', array_map('strval', $messages)) : '';
             throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . $suffix . '.', $status);
         }
+        if (trim((string) $body) === '') {
+            return [];
+        }
 
         try {
             return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
@@ -163,6 +248,7 @@ final class JiraClient
             'key' => (string) ($issue['key'] ?? ''),
             'project' => strtolower((string) ($fields['project']['key'] ?? strtok((string) ($issue['key'] ?? ''), '-'))),
             'summary' => (string) ($fields['summary'] ?? 'Без названия'),
+            'description' => $this->descriptionToText($fields['description'] ?? ''),
             'status' => (string) ($fields['status']['name'] ?? 'Без статуса'),
             'statusCategory' => (string) ($fields['status']['statusCategory']['key'] ?? ''),
             'priority' => (string) ($fields['priority']['name'] ?? 'Без приоритета'),
@@ -178,5 +264,33 @@ final class JiraClient
             'comments' => (int) ($fields['comment']['total'] ?? 0),
             'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) ($issue['key'] ?? '')),
         ];
+    }
+
+    private function descriptionToText(mixed $description): string
+    {
+        if (is_string($description)) {
+            return $description;
+        }
+        if (!is_array($description)) {
+            return '';
+        }
+
+        $parts = [];
+        $collect = function (array $node) use (&$collect, &$parts): void {
+            if (isset($node['text']) && is_string($node['text'])) {
+                $parts[] = $node['text'];
+            }
+            foreach ($node['content'] ?? [] as $child) {
+                if (is_array($child)) {
+                    $collect($child);
+                }
+            }
+            if (in_array($node['type'] ?? '', ['paragraph', 'heading', 'listItem'], true)) {
+                $parts[] = "\n";
+            }
+        };
+        $collect($description);
+
+        return trim(preg_replace('/[ \t]*\n[ \t]*/u', "\n", implode('', $parts)) ?? '');
     }
 }
