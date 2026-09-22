@@ -6,7 +6,7 @@ const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
-const state = { issues: [], project: 'all', query: '', view: 'board', draggedKey: null };
+const state = { issues: [], project: 'all', statuses: new Set(), query: '', view: 'board', draggedKey: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -58,6 +58,23 @@ function targetColumn(issue) {
   return bucketLabels[issue.metadata?.bucket] ? issue.metadata.bucket : 'backlog';
 }
 
+function matchesStatus(issue) {
+  return state.statuses.size === 0 || state.statuses.has(issue.status);
+}
+
+function renderStatusFilter() {
+  const filter = document.querySelector('#statusFilter');
+  const statuses = [...new Set(state.issues.map(issue => issue.status).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'ru'));
+  state.statuses = new Set([...state.statuses].filter(status => statuses.includes(status)));
+  filter.querySelector('.status-options').innerHTML = statuses.length
+    ? statuses.map(status => `<label><input type="checkbox" value="${escapeHtml(status)}"${state.statuses.has(status) ? ' checked' : ''}><span>${escapeHtml(status)}</span></label>`).join('')
+    : '<p>Статусы не найдены</p>';
+  filter.querySelector('summary').textContent = state.statuses.size
+    ? `Статусы Jira: ${state.statuses.size}`
+    : 'Все статусы Jira';
+}
+
 function issueCard(issue) {
   const project = issue.project === 'ssis' ? 'ssis' : 'ods';
   const avatar = issue.assignee?.avatar
@@ -80,7 +97,7 @@ function visibleIssues() {
   return state.issues.filter(issue => {
     const matchesProject = state.project === 'all' || issue.project === state.project;
     const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
-    return matchesProject && haystack.includes(state.query);
+    return matchesProject && matchesStatus(issue) && haystack.includes(state.query);
   });
 }
 
@@ -148,7 +165,7 @@ async function loadIssues() {
     const data = await readApiResponse(response);
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
-    showDiagnostics(null); updateSummary(data.totals || {}); render();
+    renderStatusFilter(); showDiagnostics(null); updateSummary(data.totals || {}); render();
   } catch (error) {
     document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = `<div class="error-card"><strong>Не удалось загрузить задачи</strong><br>${escapeHtml(error.message)}</div>`; });
     document.querySelector('#integrationNotice').hidden = false;
@@ -271,6 +288,14 @@ document.querySelectorAll('.project-tabs button').forEach(tab => tab.addEventLis
   tab.classList.add('active'); state.project = tab.dataset.project; render();
 }));
 document.querySelector('#searchInput').addEventListener('input', event => { state.query = event.target.value.trim().toLowerCase(); render(); });
+document.querySelector('#statusFilter').addEventListener('change', event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) state.statuses.add(event.target.value); else state.statuses.delete(event.target.value);
+  renderStatusFilter(); render();
+});
+document.querySelector('#statusFilter .clear-statuses').addEventListener('click', () => {
+  state.statuses.clear(); renderStatusFilter(); render();
+});
 document.querySelector('#refreshBtn').addEventListener('click', loadIssues);
 document.querySelectorAll('.view-switch button').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.view-switch button').forEach(item => item.classList.remove('active'));
@@ -288,7 +313,9 @@ reportForm.addEventListener('submit', event => {
   event.preventDefault();
   const completedWeek = reportForm.elements.completedWeek.value;
   const plannedWeek = reportForm.elements.plannedWeek.value;
-  const scopedIssues = state.issues.filter(issue => state.project === 'all' || issue.project === state.project);
+  const scopedIssues = state.issues.filter(issue =>
+    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue)
+  );
   const completed = scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek);
   const planned = scopedIssues.filter(issue => issue.metadata?.plannedWeek === plannedWeek && targetColumn(issue) !== 'completed');
   const issueRow = issue => [issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary, issue.metadata?.shortDescription || issue.description || '', (issue.metadata?.plannedActions || []).map(entry => entry.text).join('\n'), (issue.metadata?.facts || []).map(entry => entry.text).join('\n')];
