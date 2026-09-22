@@ -29,15 +29,16 @@ if (isset($USER) && is_object($USER) && !$USER->IsAuthorized()) {
     exit;
 }
 
-if (!in_array($_SERVER['REQUEST_METHOD'], ['GET', 'POST'], true)) {
+if (!in_array($_SERVER['REQUEST_METHOD'], ['GET', 'POST', 'PATCH'], true)) {
     http_response_code(405);
-    header('Allow: GET, POST');
+    header('Allow: GET, POST, PATCH');
     echo json_encode(['error' => 'Метод не поддерживается.'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 $config = require dirname(__DIR__) . '/config.php';
 require_once dirname(__DIR__) . '/src/JiraClient.php';
+require_once dirname(__DIR__) . '/src/IssueMetadataStore.php';
 
 $project = strtolower((string) ($_GET['project'] ?? 'all'));
 if (!in_array($project, ['all', 'ods', 'ssis'], true)) {
@@ -48,6 +49,16 @@ if (!in_array($project, ['all', 'ods', 'ssis'], true)) {
 
 $client = null;
 try {
+    $metadataStore = new ProjectManager\IssueMetadataStore();
+    if ($_SERVER['REQUEST_METHOD'] === 'PATCH') {
+        $input = json_decode((string) file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
+        if (function_exists('bitrix_sessid') && !hash_equals((string) bitrix_sessid(), (string) ($input['sessid'] ?? ''))) {
+            throw new InvalidArgumentException('Сессия истекла. Обновите страницу.');
+        }
+        $metadata = $metadataStore->save((string) ($input['issueKey'] ?? ''), is_array($input) ? $input : []);
+        echo json_encode(['metadata' => $metadata], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        exit;
+    }
     $client = new JiraClient($config['jira']);
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $input = json_decode((string) file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
@@ -86,6 +97,15 @@ try {
         $issues = [...$issues, ...$result['issues']];
         $totals[$projectKey] = $result['total'];
     }
+
+    $metadata = $metadataStore->all();
+    $issues = array_map(static function (array $issue) use ($metadata): array {
+        $issue['metadata'] = $metadata[$issue['key']] ?? [
+            'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
+            'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+        ];
+        return $issue;
+    }, $issues);
 
     usort($issues, static fn (array $a, array $b): int => strcmp($b['updated'], $a['updated']));
     echo json_encode([

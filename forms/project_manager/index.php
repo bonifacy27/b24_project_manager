@@ -18,7 +18,7 @@ if (isset($APPLICATION)) {
     $APPLICATION->SetTitle('Управление проектами');
 }
 ?>
-<link rel="stylesheet" href="/forms/project_manager/styles.css?v=4">
+<link rel="stylesheet" href="/forms/project_manager/styles.css?v=5">
 <div class="project-manager">
 <section class="content">
         <div class="page-heading">
@@ -39,18 +39,24 @@ if (isset($APPLICATION)) {
         </div>
 
         <div class="integration-notice" id="integrationNotice" hidden><div><strong>Ошибка загрузки Jira</strong><span>Подробности показаны в колонках ниже.</span><details id="jiraDiagnostics" open hidden><summary>Диагностика интеграции</summary><pre></pre></details></div></div>
+        <p class="board-hint">Перетаскивайте заявки между категориями. План и заметки хранятся только здесь и не изменяют Jira.</p>
         <div class="kanban" id="kanban">
           <section class="column" data-column="week"><header><div><span class="column-dot blue-dot"></span><h2>Эта неделя</h2><b>0</b></div><button aria-label="Меню колонки">•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
 
           <section class="column" data-column="next"><header><div><span class="column-dot violet-dot"></span><h2>Следующая неделя</h2><b>0</b></div><button>•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
 
-          <section class="column" data-column="later"><header><div><span class="column-dot orange-dot"></span><h2>Позже</h2><b>0</b></div><button>•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
+          <section class="column" data-column="backlog"><header><div><span class="column-dot orange-dot"></span><h2>Бэклог</h2><b>0</b></div><button>•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
+
+          <section class="column" data-column="year"><header><div><span class="column-dot green-dot"></span><h2>Проекты на этот год</h2><b>0</b></div><button>•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
+
+          <section class="column" data-column="next_year"><header><div><span class="column-dot gray-dot"></span><h2>Проекты на следующий год</h2><b>0</b></div><button>•••</button></header><div class="cards"></div><button class="add-card">＋ Добавить задачу</button></section>
         </div>
-      </section>
+	      </section>
 </div>
-<div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">＋</div><h2 id="modalTitle">Новая заявка</h2><p>Заявка будет создана в Jira и появится на доске.</p><form id="issueForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><label>Название<input required maxlength="255" name="title" placeholder="Кратко опишите задачу"></label><div class="form-row"><label>Проект<select name="project"><option value="ods">ODS</option><option value="ssis">SSIS</option></select></label><label>План<select name="plan"><option value="week">Эта неделя</option><option value="next">Следующая неделя</option><option value="later">Позже</option></select></label></div><label>Описание<textarea name="description" maxlength="10000" placeholder="Добавьте детали задачи"></textarea></label><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Создать заявку</button></div></form></div></div>
+<div class="modal-backdrop" id="modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">＋</div><h2 id="modalTitle">Новая заявка</h2><p>Заявка будет создана в Jira и добавлена в бэклог.</p><form id="issueForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><input type="hidden" name="plan" value="later"><label>Название<input required maxlength="255" name="title" placeholder="Кратко опишите задачу"></label><div class="form-row"><label>Проект<select name="project"><option value="ods">ODS</option><option value="ssis">SSIS</option></select></label></div><label>Описание для Jira<textarea name="description" maxlength="10000" placeholder="Добавьте детали задачи"></textarea></label><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Создать заявку</button></div></form></div></div>
+<div class="modal-backdrop" id="metadataModal" hidden><div class="modal metadata-modal" role="dialog" aria-modal="true" aria-labelledby="metadataTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">✎</div><h2 id="metadataTitle">План заявки</h2><p id="metadataSubtitle"></p><form id="metadataForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><input type="hidden" name="issueKey"><label>Категория<select name="bucket"><option value="week">Эта неделя</option><option value="next">Следующая неделя</option><option value="backlog">Бэклог</option><option value="year">Проекты на этот год</option><option value="next_year">Проекты на следующий год</option></select></label><label>Краткое описание<textarea name="shortDescription" maxlength="5000" placeholder="Контекст и ожидаемый результат"></textarea></label><div class="history-block" data-history="plannedActions"></div><label>Добавить планируемое действие<textarea name="plannedAction" maxlength="10000" placeholder="Что планируется сделать"></textarea></label><div class="history-block" data-history="facts"></div><label>Добавить факт<textarea name="fact" maxlength="10000" placeholder="Что фактически сделано"></textarea></label><small class="date-note">Дата и время для действия и факта будут зафиксированы при сохранении.</small><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Сохранить</button></div></form></div></div>
   <div class="toast" id="toast"><span>✓</span><div><strong>Заявка создана</strong><small>Синхронизация с Jira запущена</small></div></div>
-<script src="/forms/project_manager/app.js?v=7"></script>
+<script src="/forms/project_manager/app.js?v=8"></script>
 <?php
 if (is_file($bitrixFooter)) {
     require $bitrixFooter;
