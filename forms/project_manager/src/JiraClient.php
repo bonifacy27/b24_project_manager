@@ -9,13 +9,35 @@ use RuntimeException;
 
 final class JiraClient
 {
+    /** @var array<string, mixed> */
+    private array $diagnostics = [];
+
     public function __construct(private readonly array $config)
     {
+        if (!empty($this->config['credentials_error'])) {
+            throw new RuntimeException('Не удалось получить учётные данные Jira: ' . $this->config['credentials_error']);
+        }
         foreach (['base_url', 'username', 'password'] as $key) {
             if (empty($this->config[$key])) {
-                throw new RuntimeException('Интеграция с Jira не настроена. Укажите адрес, логин и пароль в config.php.');
+                throw new RuntimeException('Интеграция с Jira не настроена: отсутствует параметр ' . $key . '.');
             }
         }
+        $password = (string) $this->config['password'];
+        $this->diagnostics = [
+            'baseUrl' => (string) $this->config['base_url'],
+            'username' => (string) $this->config['username'],
+            // Never send a reusable password to a browser. Length and a short
+            // fingerprint are enough to verify which constant was decoded.
+            'password' => str_repeat('•', min(strlen($password), 12)),
+            'passwordLength' => strlen($password),
+            'passwordFingerprint' => substr(hash('sha256', $password), 0, 12),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function getDiagnostics(): array
+    {
+        return $this->diagnostics;
     }
 
     /** @return array{issues: list<array<string, mixed>>, total: int} */
@@ -35,7 +57,29 @@ final class JiraClient
     }
 
     /** @return array<string, mixed> */
-    private function request(string $method, string $path, array $query = []): array
+    public function createIssue(string $projectKey, string $issueType, string $summary, string $description, ?string $dueDate): array
+    {
+        $fields = [
+            'project' => ['key' => $projectKey],
+            'issuetype' => ['name' => $issueType],
+            'summary' => $summary,
+            'description' => $description,
+        ];
+        if ($dueDate !== null) {
+            $fields['duedate'] = $dueDate;
+        }
+
+        $created = $this->request('POST', '/rest/api/2/issue', [], ['fields' => $fields]);
+        $key = (string) ($created['key'] ?? '');
+        if ($key === '') {
+            throw new RuntimeException('Jira не вернула ключ созданной заявки.');
+        }
+
+        return ['key' => $key, 'url' => $this->config['base_url'] . '/browse/' . rawurlencode($key)];
+    }
+
+    /** @return array<string, mixed> */
+    private function request(string $method, string $path, array $query = [], ?array $payload = null): array
     {
         $url = $this->config['base_url'] . $path;
         if ($query !== []) {
@@ -48,16 +92,35 @@ final class JiraClient
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
             CURLOPT_USERPWD => $this->config['username'] . ':' . $this->config['password'],
-            CURLOPT_HTTPHEADER => ['Accept: application/json'],
+            CURLOPT_HTTPHEADER => ['Accept: application/json', 'Content-Type: application/json'],
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_TIMEOUT => (int) ($this->config['timeout'] ?? 20),
             CURLOPT_SSL_VERIFYPEER => (bool) ($this->config['verify_ssl'] ?? true),
         ]);
+        if ($payload !== null) {
+            curl_setopt($handle, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        }
 
         $body = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        $contentType = (string) curl_getinfo($handle, CURLINFO_CONTENT_TYPE);
         $curlError = curl_error($handle);
         curl_close($handle);
+
+        $responseBody = (string) $body;
+        foreach ([(string) $this->config['username'], (string) $this->config['password']] as $secret) {
+            if ($secret !== '') {
+                $responseBody = str_replace($secret, '[hidden]', $responseBody);
+            }
+        }
+        $this->diagnostics = array_merge($this->diagnostics, [
+            'method' => $method,
+            'url' => $url,
+            'httpStatus' => $status,
+            'contentType' => $contentType,
+            'curlError' => $curlError,
+            'jiraResponse' => mb_substr($responseBody, 0, 4000),
+        ]);
 
         if ($body === false) {
             throw new RuntimeException('Не удалось подключиться к Jira: ' . $curlError);
@@ -66,7 +129,10 @@ final class JiraClient
             throw new RuntimeException('Jira отклонила учётные данные интеграции.', $status);
         }
         if ($status < 200 || $status >= 300) {
-            throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . '.', $status);
+            $details = json_decode((string) $body, true);
+            $messages = array_merge($details['errorMessages'] ?? [], array_values($details['errors'] ?? []));
+            $suffix = $messages ? ': ' . implode('; ', array_map('strval', $messages)) : '';
+            throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . $suffix . '.', $status);
         }
 
         try {
