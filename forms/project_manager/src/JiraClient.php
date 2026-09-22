@@ -89,6 +89,45 @@ final class JiraClient
         return ['key' => $key, 'url' => $this->config['base_url'] . '/browse/' . rawurlencode($key)];
     }
 
+    /** @return array{key: string, status: string} */
+    public function completeIssue(string $issueKey): array
+    {
+        $issueKey = strtoupper(trim($issueKey));
+        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
+            throw new \InvalidArgumentException('Неверно указан ключ Jira.');
+        }
+
+        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), ['fields' => 'status']);
+        $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
+        if (!in_array(mb_strtolower(trim($currentStatus)), ['уточнение информации', 'взят в работу'], true)) {
+            throw new \InvalidArgumentException(
+                'Выполнить заявку можно только из статусов «Уточнение информации» или «Взят в работу».'
+            );
+        }
+
+        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', ['expand' => 'transitions.fields']);
+        $transitions = is_array($response['transitions'] ?? null) ? $response['transitions'] : [];
+        $transition = null;
+        foreach ($transitions as $candidate) {
+            $targetName = (string) ($candidate['to']['name'] ?? '');
+            $category = (string) ($candidate['to']['statusCategory']['key'] ?? '');
+            if ($category === 'done' || preg_match('/выполн|закры|решен/iu', $targetName)) {
+                $transition = $candidate;
+                break;
+            }
+        }
+        $transitionId = (string) ($transition['id'] ?? '');
+        if ($transitionId === '') {
+            throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
+        }
+
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', [], [
+            'transition' => ['id' => $transitionId],
+        ]);
+
+        return ['key' => $issueKey, 'status' => (string) ($transition['to']['name'] ?? 'Выполнено')];
+    }
+
     /** @return array<string, mixed> */
     private function request(string $method, string $path, array $query = [], ?array $payload = null): array
     {
@@ -144,6 +183,9 @@ final class JiraClient
             $messages = array_merge($details['errorMessages'] ?? [], array_values($details['errors'] ?? []));
             $suffix = $messages ? ': ' . implode('; ', array_map('strval', $messages)) : '';
             throw new RuntimeException('Jira вернула ошибку HTTP ' . $status . $suffix . '.', $status);
+        }
+        if (trim((string) $body) === '') {
+            return [];
         }
 
         try {

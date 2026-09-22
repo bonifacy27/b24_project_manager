@@ -65,6 +65,15 @@ try {
         if (function_exists('bitrix_sessid') && !hash_equals((string) bitrix_sessid(), (string) ($input['sessid'] ?? ''))) {
             throw new InvalidArgumentException('Сессия истекла. Обновите страницу.');
         }
+        if (($input['action'] ?? '') === 'complete') {
+            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''));
+            $metadata = $metadataStore->save($issue['key'], ['bucket' => 'completed']);
+            echo json_encode(
+                ['issue' => $issue, 'metadata' => $metadata],
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+            );
+            exit;
+        }
         $project = strtolower(trim((string) ($input['project'] ?? '')));
         $summary = trim((string) ($input['title'] ?? ''));
         $description = trim((string) ($input['description'] ?? ''));

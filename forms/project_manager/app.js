@@ -217,6 +217,10 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   if (!issue) return;
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
+  document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
+  metadataForm.querySelector('.complete-jira').hidden = !['уточнение информации', 'взят в работу'].includes(
+    String(issue.status || '').trim().toLowerCase()
+  );
   metadataForm.elements.bucket.value = bucket;
   metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
@@ -275,6 +279,29 @@ metadataForm.querySelector('.add-tag button').addEventListener('click', () => {
   }
   renderTagPicker([...metadataForm.querySelectorAll('.tag-picker-options input:checked')].map(field => field.value).concat(canonicalTag));
   input.value = '';
+});
+metadataForm.querySelector('.complete-jira').addEventListener('click', async event => {
+  const issue = findIssue(metadataForm.elements.issueKey.value);
+  if (!issue || !window.confirm(`Перевести ${issue.key} в выполненный статус Jira?`)) return;
+  const button = event.currentTarget;
+  const errorBox = metadataForm.querySelector('.form-error');
+  button.disabled = true; button.textContent = 'Выполняем…'; errorBox.hidden = true;
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ action: 'complete', issueKey: issue.key, sessid: metadataForm.elements.sessid.value })
+    });
+    const data = await readApiResponse(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
+    issue.status = data.issue.status;
+    issue.metadata = data.metadata;
+    closeMetadata(); updateSummary(); render();
+    showToast('Заявка выполнена', `${issue.key} · ${issue.status}`);
+  } catch (error) {
+    errorBox.textContent = error.message; errorBox.hidden = false;
+  } finally {
+    button.disabled = false; button.textContent = 'Выполнить в Jira';
+  }
 });
 
 document.querySelectorAll('.column').forEach(column => {
