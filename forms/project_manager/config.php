@@ -76,8 +76,8 @@ return [
         'timeout' => 20,
         'verify_ssl' => true,
         'jql' => [
-            'ods' => 'project = ODS AND assignee = LobachAV AND resolution = Unresolved ORDER BY updated DESC',
-            'ssis' => 'status not in (Done, Closed, "Выполнено", "Закрыто") AND ("Customer Request Type" in ("Корпоративный портал_OLD", "Корпоративный портал (SSIS)") OR cf[10866] = "Корпоративный портал Битрикс24 (СУРВ)") ORDER BY created DESC, updated DESC',
+            'ods' => 'project = ODS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
+            'ssis' => 'project = SSIS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
         ],
         'projects' => [
             'ods' => ['key' => 'ODS', 'issue_type' => 'Задача'],
