@@ -76,10 +76,8 @@ return [
         'timeout' => 20,
         'verify_ssl' => true,
         'jql' => [
-            // Exclude the one-minute window of the bulk resolution performed on
-            // 25 August 2026 at 15:00 in the Jira/user time zone.
-            'ods' => 'project = ODS AND assignee = %s AND (resolution = Unresolved OR resolved < "2026-08-25 15:00" OR resolved >= "2026-08-25 15:01") AND (resolution = Unresolved OR (resolved >= -30d AND resolved <= 30d)) ORDER BY updated DESC',
-            'ssis' => 'project = SSIS AND assignee = %s AND (resolution = Unresolved OR resolved < "2026-08-25 15:00" OR resolved >= "2026-08-25 15:01") AND (resolution = Unresolved OR (resolved >= -30d AND resolved <= 30d)) ORDER BY updated DESC',
+            'ods' => 'project = ODS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
+            'ssis' => 'project = SSIS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
         ],
         'projects' => [
             'ods' => ['key' => 'ODS', 'issue_type' => 'Задача'],
