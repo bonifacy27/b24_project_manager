@@ -66,8 +66,9 @@ try {
             throw new InvalidArgumentException('Сессия истекла. Обновите страницу.');
         }
         if (($input['action'] ?? '') === 'complete') {
-            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''));
-            $metadata = $metadataStore->save($issue['key'], ['bucket' => 'completed']);
+            $comment = trim((string) ($input['comment'] ?? ''));
+            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $comment);
+            $metadata = $metadataStore->save($issue['key'], ['bucket' => 'completed', 'fact' => $comment]);
             echo json_encode(
                 ['issue' => $issue, 'metadata' => $metadata],
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR

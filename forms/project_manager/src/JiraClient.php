@@ -90,11 +90,15 @@ final class JiraClient
     }
 
     /** @return array{key: string, status: string} */
-    public function completeIssue(string $issueKey): array
+    public function completeIssue(string $issueKey, string $comment): array
     {
         $issueKey = strtoupper(trim($issueKey));
+        $comment = trim($comment);
         if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
             throw new \InvalidArgumentException('Неверно указан ключ Jira.');
+        }
+        if ($comment === '' || mb_strlen($comment) > 10000) {
+            throw new \InvalidArgumentException('Для выполнения заявки укажите комментарий длиной до 10000 символов.');
         }
 
         $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), ['fields' => 'status']);
@@ -123,6 +127,7 @@ final class JiraClient
 
         $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', [], [
             'transition' => ['id' => $transitionId],
+            'update' => ['comment' => [['add' => ['body' => $comment]]]],
         ]);
 
         return ['key' => $issueKey, 'status' => (string) ($transition['to']['name'] ?? 'Выполнено')];

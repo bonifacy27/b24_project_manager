@@ -218,9 +218,12 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
-  metadataForm.querySelector('.complete-jira').hidden = !['уточнение информации', 'взят в работу'].includes(
+  const canCompleteInJira = ['уточнение информации', 'взят в работу'].includes(
     String(issue.status || '').trim().toLowerCase()
   );
+  metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
+  metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
+  metadataForm.elements.completeComment.value = '';
   metadataForm.elements.bucket.value = bucket;
   metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
@@ -282,14 +285,21 @@ metadataForm.querySelector('.add-tag button').addEventListener('click', () => {
 });
 metadataForm.querySelector('.complete-jira').addEventListener('click', async event => {
   const issue = findIssue(metadataForm.elements.issueKey.value);
+  const comment = metadataForm.elements.completeComment.value.trim();
+  const errorBox = metadataForm.querySelector('.form-error');
+  if (!comment) {
+    errorBox.textContent = 'Укажите комментарий для выполнения заявки в Jira.';
+    errorBox.hidden = false;
+    metadataForm.elements.completeComment.focus();
+    return;
+  }
   if (!issue || !window.confirm(`Перевести ${issue.key} в выполненный статус Jira?`)) return;
   const button = event.currentTarget;
-  const errorBox = metadataForm.querySelector('.form-error');
   button.disabled = true; button.textContent = 'Выполняем…'; errorBox.hidden = true;
   try {
     const response = await fetch(apiUrl, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ action: 'complete', issueKey: issue.key, sessid: metadataForm.elements.sessid.value })
+      body: JSON.stringify({ action: 'complete', issueKey: issue.key, comment, sessid: metadataForm.elements.sessid.value })
     });
     const data = await readApiResponse(response);
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
