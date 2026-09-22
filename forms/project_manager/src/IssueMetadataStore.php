@@ -27,6 +27,8 @@ final class IssueMetadataStore
             ' ISSUE_KEY varchar(64) NOT NULL,' .
             ' BUCKET varchar(32) NOT NULL DEFAULT \'backlog\',' .
             ' COMPLEXITY varchar(16) NOT NULL DEFAULT \'medium\',' .
+            ' PLANNED_WEEK varchar(8) NULL,' .
+            ' COMPLETED_WEEK varchar(8) NULL,' .
             ' SHORT_DESCRIPTION text NULL,' .
             ' PLANNED_ACTIONS text NULL,' .
             ' FACTS text NULL,' .
@@ -39,6 +41,26 @@ final class IssueMetadataStore
             $this->connection->queryExecute(
                 "ALTER TABLE " . self::TABLE . " ADD COMPLEXITY varchar(16) NOT NULL DEFAULT 'medium' AFTER BUCKET"
             );
+        }
+        foreach (['PLANNED_WEEK', 'COMPLETED_WEEK'] as $column) {
+            $existingColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TABLE . " LIKE '{$column}'")->fetch();
+            if (!$existingColumn) {
+                $this->connection->queryExecute(
+                    "ALTER TABLE " . self::TABLE . " ADD {$column} varchar(8) NULL AFTER COMPLEXITY"
+                );
+                $currentWeek = (new \DateTimeImmutable('today'))->format('o-\WW');
+                if ($column === 'PLANNED_WEEK') {
+                    $nextWeek = (new \DateTimeImmutable('+1 week'))->format('o-\WW');
+                    $this->connection->queryExecute(
+                        "UPDATE " . self::TABLE . " SET PLANNED_WEEK = CASE " .
+                        "WHEN BUCKET = 'week' THEN '{$currentWeek}' WHEN BUCKET = 'next' THEN '{$nextWeek}' ELSE NULL END"
+                    );
+                } else {
+                    $this->connection->queryExecute(
+                        "UPDATE " . self::TABLE . " SET COMPLETED_WEEK = '{$currentWeek}' WHERE BUCKET = 'completed'"
+                    );
+                }
+            }
         }
     }
 
@@ -73,6 +95,20 @@ final class IssueMetadataStore
         if (!in_array($complexity, self::COMPLEXITIES, true)) {
             throw new \InvalidArgumentException('Неверно указана сложность заявки.');
         }
+        $plannedWeek = array_key_exists('plannedWeek', $input)
+            ? strtoupper(trim((string) $input['plannedWeek']))
+            : (string) ($current['plannedWeek'] ?? '');
+        if ($plannedWeek !== '' && !preg_match('/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/', $plannedWeek)) {
+            throw new \InvalidArgumentException('Неверно указана плановая неделя.');
+        }
+        if ($plannedWeek === '' && in_array($bucket, ['week', 'next'], true)) {
+            $weekDate = new \DateTimeImmutable($bucket === 'next' ? '+1 week' : 'today');
+            $plannedWeek = $weekDate->format('o-\WW');
+        }
+        $completedWeek = (string) ($current['completedWeek'] ?? '');
+        if ($bucket === 'completed' && ($current['bucket'] ?? '') !== 'completed') {
+            $completedWeek = (new \DateTimeImmutable('today'))->format('o-\WW');
+        }
         $shortDescription = array_key_exists('shortDescription', $input)
             ? trim((string) $input['shortDescription'])
             : (string) ($current['shortDescription'] ?? '');
@@ -95,15 +131,17 @@ final class IssueMetadataStore
             'key' => $sql->forSql($issueKey, 64),
             'bucket' => $sql->forSql($bucket, 32),
             'complexity' => $sql->forSql($complexity, 16),
+            'plannedWeek' => $sql->forSql($plannedWeek, 8),
+            'completedWeek' => $sql->forSql($completedWeek, 8),
             'description' => $sql->forSql($shortDescription),
             'actions' => $sql->forSql((string) json_encode($plannedActions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'facts' => $sql->forSql((string) json_encode($facts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'updated' => $sql->forSql(gmdate('Y-m-d H:i:s')),
         ];
         $this->connection->queryExecute(
-            "INSERT INTO " . self::TABLE . " (ISSUE_KEY, BUCKET, COMPLEXITY, SHORT_DESCRIPTION, PLANNED_ACTIONS, FACTS, UPDATED_AT) VALUES " .
-            "('{$values['key']}', '{$values['bucket']}', '{$values['complexity']}', '{$values['description']}', '{$values['actions']}', '{$values['facts']}', '{$values['updated']}') " .
-            "ON DUPLICATE KEY UPDATE BUCKET=VALUES(BUCKET), COMPLEXITY=VALUES(COMPLEXITY), SHORT_DESCRIPTION=VALUES(SHORT_DESCRIPTION), " .
+            "INSERT INTO " . self::TABLE . " (ISSUE_KEY, BUCKET, COMPLEXITY, PLANNED_WEEK, COMPLETED_WEEK, SHORT_DESCRIPTION, PLANNED_ACTIONS, FACTS, UPDATED_AT) VALUES " .
+            "('{$values['key']}', '{$values['bucket']}', '{$values['complexity']}', NULLIF('{$values['plannedWeek']}', ''), NULLIF('{$values['completedWeek']}', ''), '{$values['description']}', '{$values['actions']}', '{$values['facts']}', '{$values['updated']}') " .
+            "ON DUPLICATE KEY UPDATE BUCKET=VALUES(BUCKET), COMPLEXITY=VALUES(COMPLEXITY), PLANNED_WEEK=VALUES(PLANNED_WEEK), COMPLETED_WEEK=VALUES(COMPLETED_WEEK), SHORT_DESCRIPTION=VALUES(SHORT_DESCRIPTION), " .
             "PLANNED_ACTIONS=VALUES(PLANNED_ACTIONS), FACTS=VALUES(FACTS), UPDATED_AT=VALUES(UPDATED_AT)"
         );
 
@@ -170,6 +208,8 @@ final class IssueMetadataStore
             'issueKey' => (string) $row['ISSUE_KEY'],
             'bucket' => in_array($row['BUCKET'], self::BUCKETS, true) ? $row['BUCKET'] : 'backlog',
             'complexity' => in_array($row['COMPLEXITY'] ?? '', self::COMPLEXITIES, true) ? $row['COMPLEXITY'] : 'medium',
+            'plannedWeek' => (string) ($row['PLANNED_WEEK'] ?? ''),
+            'completedWeek' => (string) ($row['COMPLETED_WEEK'] ?? ''),
             'shortDescription' => (string) ($row['SHORT_DESCRIPTION'] ?? ''),
             'plannedActions' => $this->decodeEntries((string) ($row['PLANNED_ACTIONS'] ?? '')),
             'facts' => $this->decodeEntries((string) ($row['FACTS'] ?? '')),

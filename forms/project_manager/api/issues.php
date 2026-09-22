@@ -115,7 +115,8 @@ try {
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
-            'complexity' => 'medium', 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+            'complexity' => 'medium', 'plannedWeek' => '', 'completedWeek' => '',
+            'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
     }, $issues);
