@@ -84,11 +84,12 @@ function issueCard(issue) {
     ? `<p class="jira-description-preview" title="${escapeHtml(issue.description)}">${escapeHtml(truncate(issue.description, 100))}</p>`
     : '<p class="jira-description-preview muted">Описание в Jira не добавлено</p>';
   const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'medium';
-  const assignedWeek = issue.metadata?.completedWeek || issue.metadata?.plannedWeek;
+  const plannedWeek = issue.metadata?.plannedWeek;
+  const completedWeek = issue.metadata?.completedWeek;
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
     <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
     <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}
-    <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${assignedWeek ? `<span>Неделя: ${escapeHtml(assignedWeek)}</span>` : ''}</div>
+    <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
 }
@@ -197,6 +198,9 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
     || (['week', 'next'].includes(bucket) ? weekForBucket(bucket) : '');
+  const completedWeekField = metadataForm.querySelector('.completed-week-field');
+  completedWeekField.hidden = !issue.metadata?.completedWeek;
+  metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
   metadataForm.elements.jiraDescription.value = issue.description || 'Описание в Jira не добавлено';
   metadataForm.elements.shortDescription.value = issue.metadata?.shortDescription || '';
   document.querySelector('#metadataSubtitle').textContent = `${issue.key} · ${issue.summary}`;
