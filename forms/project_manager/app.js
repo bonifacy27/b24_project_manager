@@ -6,7 +6,7 @@ const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
-const state = { issues: [], project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], query: '', view: 'board', draggedKey: null };
+const state = { issues: [], project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -93,6 +93,21 @@ function renderTagPicker(selectedTags = []) {
   metadataForm.querySelector('.tag-picker-options').innerHTML = state.tagCatalog.length
     ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${selected.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
     : '<p>Добавьте первый тег.</p>';
+}
+
+function renderCreateFields() {
+  const project = form.elements.project.value;
+  const options = state.creationOptions[project];
+  const fields = form.querySelector('.create-jira-fields');
+  const component = form.elements.componentId;
+  const version = form.elements.fixVersionId;
+  fields.hidden = !options;
+  component.required = Boolean(options?.requiredFields?.includes('component'));
+  version.required = Boolean(options?.requiredFields?.includes('fixVersion'));
+  component.innerHTML = '<option value="">Выберите компонент</option>' + (options?.components || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  version.innerHTML = '<option value="">Выберите версию</option>' + (options?.versions || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
 }
 
 function issueCard(issue) {
@@ -189,6 +204,8 @@ async function loadIssues() {
     state.issues = Array.isArray(data.issues) ? data.issues : [];
     state.tagCatalog = [...new Set([...(data.tags || []), ...state.issues.flatMap(issue => issue.metadata?.tags || [])])]
       .sort((left, right) => left.localeCompare(right, 'ru'));
+    state.creationOptions = data.creationOptions || {};
+    renderCreateFields();
     renderStatusFilter(); renderTagFilter(); showDiagnostics(null); updateSummary(data.totals || {}); render();
   } catch (error) {
     document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = `<div class="error-card"><strong>Не удалось загрузить задачи</strong><br>${escapeHtml(error.message)}</div>`; });
@@ -201,7 +218,7 @@ function showToast(title, detail, error = false) {
   toast.classList.toggle('error', error); toast.classList.add('show');
   setTimeout(() => toast.classList.remove('show'), 4000);
 }
-function openModal() { modal.hidden = false; form.elements.title.focus(); }
+function openModal() { renderCreateFields(); modal.hidden = false; form.elements.title.focus(); }
 function closeModal() { modal.hidden = true; form.querySelector('.form-error').hidden = true; }
 
 function formatEntryDate(value) {
@@ -257,6 +274,7 @@ document.querySelectorAll('.add-card').forEach(button => button.addEventListener
 modal.querySelector('.modal-close').addEventListener('click', closeModal);
 modal.querySelector('.cancel').addEventListener('click', closeModal);
 modal.addEventListener('click', event => { if (event.target === modal) closeModal(); });
+form.elements.project.addEventListener('change', renderCreateFields);
 metadataModal.querySelector('.modal-close').addEventListener('click', closeMetadata);
 metadataModal.querySelector('.cancel').addEventListener('click', closeMetadata);
 metadataModal.addEventListener('click', event => { if (event.target === metadataModal) closeMetadata(); });

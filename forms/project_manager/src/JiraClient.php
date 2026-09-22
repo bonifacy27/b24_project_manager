@@ -68,7 +68,15 @@ final class JiraClient
     }
 
     /** @return array<string, mixed> */
-    public function createIssue(string $projectKey, string $issueType, string $summary, string $description, ?string $dueDate): array
+    public function createIssue(
+        string $projectKey,
+        string $issueType,
+        string $summary,
+        string $description,
+        ?string $dueDate,
+        ?string $componentId = null,
+        ?string $fixVersionId = null
+    ): array
     {
         $fields = [
             'project' => ['key' => $projectKey],
@@ -79,6 +87,12 @@ final class JiraClient
         if ($dueDate !== null) {
             $fields['duedate'] = $dueDate;
         }
+        if ($componentId !== null) {
+            $fields['components'] = [['id' => $componentId]];
+        }
+        if ($fixVersionId !== null) {
+            $fields['fixVersions'] = [['id' => $fixVersionId]];
+        }
 
         $created = $this->request('POST', '/rest/api/2/issue', [], ['fields' => $fields]);
         $key = (string) ($created['key'] ?? '');
@@ -87,6 +101,30 @@ final class JiraClient
         }
 
         return ['key' => $key, 'url' => $this->config['base_url'] . '/browse/' . rawurlencode($key)];
+    }
+
+    /** @return array{components: list<array{id: string, name: string}>, versions: list<array{id: string, name: string}>} */
+    public function getCreateOptions(string $projectKey): array
+    {
+        $encodedKey = rawurlencode($projectKey);
+        $components = $this->request('GET', '/rest/api/2/project/' . $encodedKey . '/components');
+        $versions = $this->request('GET', '/rest/api/2/project/' . $encodedKey . '/versions');
+
+        $normalise = static fn (array $item): array => [
+            'id' => (string) ($item['id'] ?? ''),
+            'name' => (string) ($item['name'] ?? ''),
+        ];
+        $availableVersions = array_filter(
+            $versions,
+            static fn (mixed $version): bool => is_array($version)
+                && empty($version['archived'])
+                && empty($version['released'])
+        );
+
+        return [
+            'components' => array_values(array_map($normalise, array_filter($components, 'is_array'))),
+            'versions' => array_values(array_map($normalise, $availableVersions)),
+        ];
     }
 
     /** @return array{key: string, status: string} */

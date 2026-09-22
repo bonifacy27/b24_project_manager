@@ -90,6 +90,8 @@ try {
         $summary = trim((string) ($input['title'] ?? ''));
         $description = trim((string) ($input['description'] ?? ''));
         $complexity = strtolower(trim((string) ($input['complexity'] ?? '')));
+        $componentId = trim((string) ($input['componentId'] ?? ''));
+        $fixVersionId = trim((string) ($input['fixVersionId'] ?? ''));
         $plan = strtolower((string) ($input['plan'] ?? 'later'));
         if (!isset($config['jira']['projects'][$project]) || !in_array($plan, ['week', 'next', 'later'], true)) {
             throw new InvalidArgumentException('Неверно указан проект или план.');
@@ -108,7 +110,25 @@ try {
             default => null,
         };
         $settings = $config['jira']['projects'][$project];
-        $issue = $client->createIssue($settings['key'], $settings['issue_type'], $summary, $description, $dueDate);
+        $requiredFields = $settings['required_create_fields'] ?? [];
+        if ((in_array('component', $requiredFields, true) && $componentId === '')
+            || (in_array('fixVersion', $requiredFields, true) && $fixVersionId === '')) {
+            throw new InvalidArgumentException('Для проекта ODS выберите компонент и версию исправления.');
+        }
+        foreach ([$componentId, $fixVersionId] as $jiraId) {
+            if ($jiraId !== '' && !ctype_digit($jiraId)) {
+                throw new InvalidArgumentException('Некорректно выбраны компонент или версия исправления.');
+            }
+        }
+        $issue = $client->createIssue(
+            $settings['key'],
+            $settings['issue_type'],
+            $summary,
+            $description,
+            $dueDate,
+            $componentId !== '' ? $componentId : null,
+            $fixVersionId !== '' ? $fixVersionId : null
+        );
         $metadataStore->save($issue['key'], ['bucket' => 'backlog', 'complexity' => $complexity]);
         http_response_code(201);
         echo json_encode(['issue' => $issue], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
@@ -117,6 +137,7 @@ try {
     $projects = $project === 'all' ? ['ods', 'ssis'] : [$project];
     $issues = [];
     $totals = [];
+    $creationOptions = [];
     $currentUserLogin = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
         ? trim((string) $USER->GetLogin())
         : '';
@@ -130,6 +151,12 @@ try {
         $result = $client->search($jql);
         $issues = [...$issues, ...$result['issues']];
         $totals[$projectKey] = $result['total'];
+        $settings = $config['jira']['projects'][$projectKey];
+        if (($settings['required_create_fields'] ?? []) !== []) {
+            $creationOptions[$projectKey] = $client->getCreateOptions($settings['key']) + [
+                'requiredFields' => $settings['required_create_fields'],
+            ];
+        }
     }
 
     $metadata = $metadataStore->all();
@@ -147,6 +174,7 @@ try {
         'issues' => $issues,
         'totals' => $totals,
         'tags' => $metadataStore->tags(),
+        'creationOptions' => $creationOptions,
         'syncedAt' => gmdate(DATE_ATOM),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
