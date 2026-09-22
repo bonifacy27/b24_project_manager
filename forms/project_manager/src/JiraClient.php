@@ -75,7 +75,9 @@ final class JiraClient
         string $description,
         ?string $dueDate,
         ?string $componentId = null,
-        ?string $fixVersionId = null
+        ?string $fixVersionId = null,
+        ?string $reporter = null,
+        ?string $assignee = null
     ): array
     {
         $fields = [
@@ -92,6 +94,12 @@ final class JiraClient
         }
         if ($fixVersionId !== null) {
             $fields['fixVersions'] = [['id' => $fixVersionId]];
+        }
+        if ($reporter !== null) {
+            $fields['reporter'] = ['name' => $reporter];
+        }
+        if ($assignee !== null) {
+            $fields['assignee'] = ['name' => $assignee];
         }
 
         $created = $this->request('POST', '/rest/api/2/issue', [], ['fields' => $fields]);

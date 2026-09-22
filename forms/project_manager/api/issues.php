@@ -120,6 +120,15 @@ try {
                 throw new InvalidArgumentException('Некорректно выбраны компонент или версия исправления.');
             }
         }
+        $jiraCurrentUser = null;
+        if (!empty($settings['use_current_user'])) {
+            $jiraCurrentUser = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
+                ? trim((string) $USER->GetLogin())
+                : '';
+            if ($jiraCurrentUser === '') {
+                throw new RuntimeException('Не удалось определить пользователя для автора и исполнителя ODS.');
+            }
+        }
         $issue = $client->createIssue(
             $settings['key'],
             $settings['issue_type'],
@@ -127,7 +136,9 @@ try {
             $description,
             $dueDate,
             $componentId !== '' ? $componentId : null,
-            $fixVersionId !== '' ? $fixVersionId : null
+            $fixVersionId !== '' ? $fixVersionId : null,
+            $jiraCurrentUser,
+            $jiraCurrentUser
         );
         $metadataStore->save($issue['key'], ['bucket' => 'backlog', 'complexity' => $complexity]);
         http_response_code(201);

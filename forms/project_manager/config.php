@@ -80,7 +80,12 @@ return [
             'ssis' => 'project = SSIS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
         ],
         'projects' => [
-            'ods' => ['key' => 'ODS', 'issue_type' => 'Задача', 'required_create_fields' => ['component', 'fixVersion']],
+            'ods' => [
+                'key' => 'ODS',
+                'issue_type' => 'Задача',
+                'required_create_fields' => ['component', 'fixVersion'],
+                'use_current_user' => true,
+            ],
             'ssis' => ['key' => 'SSIS', 'issue_type' => 'Задача'],
         ],
     ],
