@@ -13,7 +13,15 @@ apiUrl.searchParams.set('project_manager_api', 'issues');
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
 })[character]);
-const bucketLabels = { week: 'Эта неделя', next: 'Следующая неделя', backlog: 'Бэклог', year: 'Проекты на этот год', next_year: 'Проекты на следующий год' };
+const bucketLabels = Object.fromEntries(
+  [...document.querySelectorAll('.column[data-column]')].map(column => [column.dataset.column, column.dataset.label])
+);
+const complexityLabels = { low: 'Низкий', medium: 'Средний', high: 'Высокий' };
+
+function truncate(value, length) {
+  const characters = Array.from(String(value || ''));
+  return characters.length > length ? `${characters.slice(0, length).join('')}…` : characters.join('');
+}
 
 function initials(name) {
   return String(name || '?').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
@@ -28,12 +36,13 @@ function issueCard(issue) {
   const avatar = issue.assignee?.avatar
     ? `<img src="${escapeHtml(issue.assignee.avatar)}" alt="">`
     : escapeHtml(initials(issue.assignee?.name));
-  const description = issue.metadata?.shortDescription
-    ? `<p class="local-description">${escapeHtml(issue.metadata.shortDescription)}</p>`
-    : '<p class="local-description muted">Краткое описание не добавлено</p>';
+  const jiraDescription = issue.description
+    ? `<p class="jira-description-preview" title="${escapeHtml(issue.description)}">${escapeHtml(truncate(issue.description, 100))}</p>`
+    : '<p class="jira-description-preview muted">Описание в Jira не добавлено</p>';
+  const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'medium';
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
-    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3>${description}
+    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
+    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span></div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -42,7 +51,7 @@ function issueCard(issue) {
 function visibleIssues() {
   return state.issues.filter(issue => {
     const matchesProject = state.project === 'all' || issue.project === state.project;
-    const haystack = `${issue.key} ${issue.summary} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''}`.toLowerCase();
+    const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
     return matchesProject && haystack.includes(state.query);
   });
 }
@@ -140,6 +149,8 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
   metadataForm.elements.bucket.value = bucket;
+  metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
+  metadataForm.elements.jiraDescription.value = issue.description || 'Описание в Jira не добавлено';
   metadataForm.elements.shortDescription.value = issue.metadata?.shortDescription || '';
   document.querySelector('#metadataSubtitle').textContent = `${issue.key} · ${issue.summary}`;
   renderHistory('plannedActions', 'Планируемые действия', issue.metadata?.plannedActions);
@@ -225,7 +236,7 @@ document.querySelectorAll('.view-switch button').forEach(button => button.addEve
   button.classList.add('active'); state.view = button.dataset.view; board.classList.toggle('list-view', state.view === 'list');
 }));
 document.querySelector('#reportBtn').addEventListener('click', () => {
-  const rows = [['Ключ', 'Проект', 'Название', 'Категория', 'Краткое описание', 'Статус Jira'], ...visibleIssues().map(i => [i.key, i.project.toUpperCase(), i.summary, bucketLabels[targetColumn(i)], i.metadata?.shortDescription || '', i.status])];
+  const rows = [['Ключ', 'Проект', 'Название', 'Категория', 'Сложность', 'Описание Jira', 'Краткое описание', 'Статус Jira'], ...visibleIssues().map(i => [i.key, i.project.toUpperCase(), i.summary, bucketLabels[targetColumn(i)], complexityLabels[i.metadata?.complexity] || complexityLabels.medium, i.description || '', i.metadata?.shortDescription || '', i.status])];
   const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
   const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
   link.download = `jira-report-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(link.href);

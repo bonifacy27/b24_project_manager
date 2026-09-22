@@ -10,7 +10,8 @@ use RuntimeException;
 final class IssueMetadataStore
 {
     private const TABLE = 'b_project_manager_issue_meta';
-    private const BUCKETS = ['week', 'next', 'backlog', 'year', 'next_year'];
+    private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'year', 'next_year'];
+    private const COMPLEXITIES = ['low', 'medium', 'high'];
 
     private readonly object $connection;
 
@@ -25,6 +26,7 @@ final class IssueMetadataStore
             'CREATE TABLE IF NOT EXISTS ' . self::TABLE . ' (' .
             ' ISSUE_KEY varchar(64) NOT NULL,' .
             ' BUCKET varchar(32) NOT NULL DEFAULT \'backlog\',' .
+            ' COMPLEXITY varchar(16) NOT NULL DEFAULT \'medium\',' .
             ' SHORT_DESCRIPTION text NULL,' .
             ' PLANNED_ACTIONS text NULL,' .
             ' FACTS text NULL,' .
@@ -32,6 +34,12 @@ final class IssueMetadataStore
             ' PRIMARY KEY (ISSUE_KEY)' .
             ')'
         );
+        $complexityColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TABLE . " LIKE 'COMPLEXITY'")->fetch();
+        if (!$complexityColumn) {
+            $this->connection->queryExecute(
+                "ALTER TABLE " . self::TABLE . " ADD COMPLEXITY varchar(16) NOT NULL DEFAULT 'medium' AFTER BUCKET"
+            );
+        }
     }
 
     /** @return array<string, array<string, mixed>> */
@@ -59,6 +67,12 @@ final class IssueMetadataStore
         }
 
         $current = $this->find($issueKey);
+        $complexity = array_key_exists('complexity', $input)
+            ? strtolower(trim((string) $input['complexity']))
+            : (string) ($current['complexity'] ?? 'medium');
+        if (!in_array($complexity, self::COMPLEXITIES, true)) {
+            throw new \InvalidArgumentException('Неверно указана сложность заявки.');
+        }
         $shortDescription = array_key_exists('shortDescription', $input)
             ? trim((string) $input['shortDescription'])
             : (string) ($current['shortDescription'] ?? '');
@@ -80,15 +94,16 @@ final class IssueMetadataStore
         $values = [
             'key' => $sql->forSql($issueKey, 64),
             'bucket' => $sql->forSql($bucket, 32),
+            'complexity' => $sql->forSql($complexity, 16),
             'description' => $sql->forSql($shortDescription),
             'actions' => $sql->forSql((string) json_encode($plannedActions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'facts' => $sql->forSql((string) json_encode($facts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'updated' => $sql->forSql(gmdate('Y-m-d H:i:s')),
         ];
         $this->connection->queryExecute(
-            "INSERT INTO " . self::TABLE . " (ISSUE_KEY, BUCKET, SHORT_DESCRIPTION, PLANNED_ACTIONS, FACTS, UPDATED_AT) VALUES " .
-            "('{$values['key']}', '{$values['bucket']}', '{$values['description']}', '{$values['actions']}', '{$values['facts']}', '{$values['updated']}') " .
-            "ON DUPLICATE KEY UPDATE BUCKET=VALUES(BUCKET), SHORT_DESCRIPTION=VALUES(SHORT_DESCRIPTION), " .
+            "INSERT INTO " . self::TABLE . " (ISSUE_KEY, BUCKET, COMPLEXITY, SHORT_DESCRIPTION, PLANNED_ACTIONS, FACTS, UPDATED_AT) VALUES " .
+            "('{$values['key']}', '{$values['bucket']}', '{$values['complexity']}', '{$values['description']}', '{$values['actions']}', '{$values['facts']}', '{$values['updated']}') " .
+            "ON DUPLICATE KEY UPDATE BUCKET=VALUES(BUCKET), COMPLEXITY=VALUES(COMPLEXITY), SHORT_DESCRIPTION=VALUES(SHORT_DESCRIPTION), " .
             "PLANNED_ACTIONS=VALUES(PLANNED_ACTIONS), FACTS=VALUES(FACTS), UPDATED_AT=VALUES(UPDATED_AT)"
         );
 
@@ -154,6 +169,7 @@ final class IssueMetadataStore
         return [
             'issueKey' => (string) $row['ISSUE_KEY'],
             'bucket' => in_array($row['BUCKET'], self::BUCKETS, true) ? $row['BUCKET'] : 'backlog',
+            'complexity' => in_array($row['COMPLEXITY'] ?? '', self::COMPLEXITIES, true) ? $row['COMPLEXITY'] : 'medium',
             'shortDescription' => (string) ($row['SHORT_DESCRIPTION'] ?? ''),
             'plannedActions' => $this->decodeEntries((string) ($row['PLANNED_ACTIONS'] ?? '')),
             'facts' => $this->decodeEntries((string) ($row['FACTS'] ?? '')),

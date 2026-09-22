@@ -68,12 +68,16 @@ try {
         $project = strtolower(trim((string) ($input['project'] ?? '')));
         $summary = trim((string) ($input['title'] ?? ''));
         $description = trim((string) ($input['description'] ?? ''));
+        $complexity = strtolower(trim((string) ($input['complexity'] ?? '')));
         $plan = strtolower((string) ($input['plan'] ?? 'later'));
         if (!isset($config['jira']['projects'][$project]) || !in_array($plan, ['week', 'next', 'later'], true)) {
             throw new InvalidArgumentException('Неверно указан проект или план.');
         }
         if ($summary === '' || mb_strlen($summary) > 255 || mb_strlen($description) > 10000) {
             throw new InvalidArgumentException('Название обязательно и должно быть короче 256 символов.');
+        }
+        if (!in_array($complexity, ['low', 'medium', 'high'], true)) {
+            throw new InvalidArgumentException('Неверно указана сложность заявки.');
         }
         $due = new DateTimeImmutable('today');
         $daysUntilSunday = 7 - (int) $due->format('N');
@@ -84,6 +88,7 @@ try {
         };
         $settings = $config['jira']['projects'][$project];
         $issue = $client->createIssue($settings['key'], $settings['issue_type'], $summary, $description, $dueDate);
+        $metadataStore->save($issue['key'], ['bucket' => 'backlog', 'complexity' => $complexity]);
         http_response_code(201);
         echo json_encode(['issue' => $issue], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         exit;
@@ -110,7 +115,7 @@ try {
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
-            'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+            'complexity' => 'medium', 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
     }, $issues);

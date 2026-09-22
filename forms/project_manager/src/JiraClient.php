@@ -53,7 +53,7 @@ final class JiraClient
                 'jql' => $jql,
                 'startAt' => $startAt,
                 'maxResults' => $pageSize,
-                'fields' => 'summary,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+                'fields' => 'summary,description,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
             ]);
             $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
             $issues = [...$issues, ...$page];
@@ -163,6 +163,7 @@ final class JiraClient
             'key' => (string) ($issue['key'] ?? ''),
             'project' => strtolower((string) ($fields['project']['key'] ?? strtok((string) ($issue['key'] ?? ''), '-'))),
             'summary' => (string) ($fields['summary'] ?? 'Без названия'),
+            'description' => $this->descriptionToText($fields['description'] ?? ''),
             'status' => (string) ($fields['status']['name'] ?? 'Без статуса'),
             'statusCategory' => (string) ($fields['status']['statusCategory']['key'] ?? ''),
             'priority' => (string) ($fields['priority']['name'] ?? 'Без приоритета'),
@@ -178,5 +179,33 @@ final class JiraClient
             'comments' => (int) ($fields['comment']['total'] ?? 0),
             'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) ($issue['key'] ?? '')),
         ];
+    }
+
+    private function descriptionToText(mixed $description): string
+    {
+        if (is_string($description)) {
+            return $description;
+        }
+        if (!is_array($description)) {
+            return '';
+        }
+
+        $parts = [];
+        $collect = function (array $node) use (&$collect, &$parts): void {
+            if (isset($node['text']) && is_string($node['text'])) {
+                $parts[] = $node['text'];
+            }
+            foreach ($node['content'] ?? [] as $child) {
+                if (is_array($child)) {
+                    $collect($child);
+                }
+            }
+            if (in_array($node['type'] ?? '', ['paragraph', 'heading', 'listItem'], true)) {
+                $parts[] = "\n";
+            }
+        };
+        $collect($description);
+
+        return trim(preg_replace('/[ \t]*\n[ \t]*/u', "\n", implode('', $parts)) ?? '');
     }
 }
