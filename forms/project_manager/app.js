@@ -95,6 +95,20 @@ function renderTagPicker(selectedTags = []) {
     : '<p>Добавьте первый тег.</p>';
 }
 
+function canCompleteStatus(status) {
+  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+}
+
+function renderLinkedIssues(issue, allowCompletion) {
+  const block = metadataForm.querySelector('.linked-issues-block');
+  const links = issue.linkedIssues || [];
+  block.hidden = links.length === 0;
+  block.querySelector('.linked-issues-list').innerHTML = links.map(link => {
+    const canCompleteLinked = allowCompletion && canCompleteStatus(link.status);
+    return `<div class="linked-issue-row"><div><small>${escapeHtml(link.relationship || 'Связана')}</small><a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a><span>${escapeHtml(link.summary || 'Без названия')}</span><em>${escapeHtml(link.status || 'Без статуса')}</em></div>${canCompleteLinked ? `<label><input type="checkbox" name="linkedIssueKeys" value="${escapeHtml(link.key)}"> Также выполнить</label>` : ''}</div>`;
+  }).join('');
+}
+
 function renderCreateFields() {
   const project = form.elements.project.value;
   const options = state.creationOptions[project];
@@ -122,9 +136,10 @@ function issueCard(issue) {
   const plannedWeek = issue.metadata?.plannedWeek;
   const completedWeek = issue.metadata?.completedWeek;
   const tags = issue.metadata?.tags || [];
+  const linkedIssues = issue.linkedIssues || [];
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
     <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -235,9 +250,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
-  const canCompleteInJira = ['уточнение информации', 'взят в работу'].includes(
-    String(issue.status || '').trim().toLowerCase()
-  );
+  const canCompleteInJira = canCompleteStatus(issue.status);
   metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
   metadataForm.elements.completeComment.value = '';
@@ -248,6 +261,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   const completedWeekField = metadataForm.querySelector('.completed-week-field');
   completedWeekField.hidden = !issue.metadata?.completedWeek;
   metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
+  renderLinkedIssues(issue, canCompleteInJira);
   renderTagPicker(issue.metadata?.tags || []);
   metadataForm.elements.newTag.value = '';
   metadataForm.elements.jiraDescription.value = issue.description || 'Описание в Jira не добавлено';
@@ -304,6 +318,8 @@ metadataForm.querySelector('.add-tag button').addEventListener('click', () => {
 metadataForm.querySelector('.complete-jira').addEventListener('click', async event => {
   const issue = findIssue(metadataForm.elements.issueKey.value);
   const comment = metadataForm.elements.completeComment.value.trim();
+  const linkedIssueKeys = [...metadataForm.querySelectorAll('[name="linkedIssueKeys"]:checked')]
+    .map(field => field.value);
   const errorBox = metadataForm.querySelector('.form-error');
   if (!comment) {
     errorBox.textContent = 'Укажите комментарий для выполнения заявки в Jira.';
@@ -311,20 +327,24 @@ metadataForm.querySelector('.complete-jira').addEventListener('click', async eve
     metadataForm.elements.completeComment.focus();
     return;
   }
-  if (!issue || !window.confirm(`Перевести ${issue.key} в выполненный статус Jira?`)) return;
+  const linkedPrompt = linkedIssueKeys.length ? ` и связанные заявки ${linkedIssueKeys.join(', ')}` : '';
+  if (!issue || !window.confirm(`Перевести ${issue.key}${linkedPrompt} в выполненный статус Jira?`)) return;
   const button = event.currentTarget;
   button.disabled = true; button.textContent = 'Выполняем…'; errorBox.hidden = true;
   try {
     const response = await fetch(apiUrl, {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ action: 'complete', issueKey: issue.key, comment, sessid: metadataForm.elements.sessid.value })
+      body: JSON.stringify({ action: 'complete', issueKey: issue.key, linkedIssueKeys, comment, sessid: metadataForm.elements.sessid.value })
     });
     const data = await readApiResponse(response);
     if (!response.ok) throw new Error(data.error || `Ошибка Jira (${response.status})`);
-    issue.status = data.issue.status;
-    issue.metadata = data.metadata;
-    closeMetadata(); updateSummary(); render();
-    showToast('Заявка выполнена', `${issue.key} · ${issue.status}`);
+    const linkedErrors = (data.linkedIssues || []).filter(item => item.error);
+    closeMetadata(); await loadIssues();
+    showToast(
+      linkedErrors.length ? 'Основная заявка выполнена' : 'Заявка выполнена',
+      linkedErrors.length ? `Не выполнены: ${linkedErrors.map(item => item.key).join(', ')}` : `${issue.key} · ${data.issue.status}`,
+      linkedErrors.length > 0
+    );
   } catch (error) {
     errorBox.textContent = error.message; errorBox.hidden = false;
   } finally {

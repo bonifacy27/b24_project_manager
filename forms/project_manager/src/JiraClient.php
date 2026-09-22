@@ -135,6 +135,22 @@ final class JiraClient
         ];
     }
 
+    /** @return list<array<string, string>> */
+    public function getLinkedIssues(string $issueKey): array
+    {
+        $issueKey = strtoupper(trim($issueKey));
+        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
+            throw new \InvalidArgumentException('Неверно указан ключ Jira.');
+        }
+        $issue = $this->request(
+            'GET',
+            '/rest/api/2/issue/' . rawurlencode($issueKey),
+            ['fields' => 'issuelinks']
+        );
+
+        return $this->normaliseLinks($issue['fields']['issuelinks'] ?? []);
+    }
+
     /** @return array{key: string, status: string} */
     public function completeIssue(string $issueKey, string $comment): array
     {
@@ -270,8 +286,39 @@ final class JiraClient
             'dueDate' => $fields['duedate'] ?? null,
             'type' => (string) ($fields['issuetype']['name'] ?? ''),
             'comments' => (int) ($fields['comment']['total'] ?? 0),
+            'linkedIssues' => $this->normaliseLinks($fields['issuelinks'] ?? []),
             'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) ($issue['key'] ?? '')),
         ];
+    }
+
+    /** @return list<array<string, string>> */
+    private function normaliseLinks(mixed $links): array
+    {
+        if (!is_array($links)) {
+            return [];
+        }
+        $normalised = [];
+        foreach ($links as $link) {
+            if (!is_array($link)) {
+                continue;
+            }
+            $isOutward = isset($link['outwardIssue']);
+            $linkedIssue = $isOutward ? ($link['outwardIssue'] ?? []) : ($link['inwardIssue'] ?? []);
+            if (!is_array($linkedIssue) || empty($linkedIssue['key'])) {
+                continue;
+            }
+            $linkedFields = $linkedIssue['fields'] ?? [];
+            $linkType = is_array($link['type'] ?? null) ? $link['type'] : [];
+            $normalised[] = [
+                'key' => (string) $linkedIssue['key'],
+                'summary' => (string) ($linkedFields['summary'] ?? ''),
+                'status' => (string) ($linkedFields['status']['name'] ?? ''),
+                'relationship' => (string) ($linkType[$isOutward ? 'outward' : 'inward'] ?? $linkType['name'] ?? ''),
+                'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) $linkedIssue['key']),
+            ];
+        }
+
+        return $normalised;
     }
 
     private function descriptionToText(mixed $description): string

@@ -75,13 +75,41 @@ try {
             }
             $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $currentUserLogin);
             $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
+            $requestedLinkedKeys = is_array($input['linkedIssueKeys'] ?? null)
+                ? array_values(array_unique(array_map('strval', $input['linkedIssueKeys'])))
+                : [];
+            if (count($requestedLinkedKeys) > 20) {
+                throw new InvalidArgumentException('Можно выполнить не более 20 связанных заявок за один раз.');
+            }
+            $actualLinkedKeys = array_column(
+                $client->getLinkedIssues((string) ($input['issueKey'] ?? '')),
+                'key'
+            );
+            foreach ($requestedLinkedKeys as $linkedKey) {
+                if (!in_array($linkedKey, $actualLinkedKeys, true)) {
+                    throw new InvalidArgumentException('Выбрана заявка, которая не связана с основной заявкой Jira.');
+                }
+            }
             $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $attributedComment);
             $metadata = $metadataStore->save($issue['key'], [
                 'bucket' => 'completed',
                 'fact' => $currentUserLogin . ': ' . $comment,
             ]);
+            $linkedResults = [];
+            foreach ($requestedLinkedKeys as $linkedKey) {
+                try {
+                    $linkedIssue = $client->completeIssue($linkedKey, $attributedComment);
+                    $metadataStore->save($linkedIssue['key'], [
+                        'bucket' => 'completed',
+                        'fact' => $currentUserLogin . ': ' . $comment,
+                    ]);
+                    $linkedResults[] = $linkedIssue + ['error' => ''];
+                } catch (Throwable $linkedException) {
+                    $linkedResults[] = ['key' => $linkedKey, 'status' => '', 'error' => $linkedException->getMessage()];
+                }
+            }
             echo json_encode(
-                ['issue' => $issue, 'metadata' => $metadata],
+                ['issue' => $issue, 'metadata' => $metadata, 'linkedIssues' => $linkedResults],
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
             );
             exit;
