@@ -6,7 +6,7 @@ const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
-const state = { issues: [], project: 'all', statuses: new Set(), query: '', view: 'board', draggedKey: null };
+const state = { issues: [], project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], query: '', view: 'board', draggedKey: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -75,6 +75,26 @@ function renderStatusFilter() {
     : 'Все статусы Jira';
 }
 
+function matchesTags(issue) {
+  return state.tags.size === 0 || [...state.tags].every(tag => issue.metadata?.tags?.includes(tag));
+}
+
+function renderTagFilter() {
+  const filter = document.querySelector('#tagFilter');
+  state.tags = new Set([...state.tags].filter(tag => state.tagCatalog.includes(tag)));
+  filter.querySelector('.tag-filter-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${state.tags.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Теги ещё не добавлены</p>';
+  filter.querySelector('summary').textContent = state.tags.size ? `Теги: ${state.tags.size}` : 'Все теги';
+}
+
+function renderTagPicker(selectedTags = []) {
+  const selected = new Set(selectedTags);
+  metadataForm.querySelector('.tag-picker-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${selected.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Добавьте первый тег.</p>';
+}
+
 function issueCard(issue) {
   const project = issue.project === 'ssis' ? 'ssis' : 'ods';
   const avatar = issue.assignee?.avatar
@@ -86,9 +106,10 @@ function issueCard(issue) {
   const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'medium';
   const plannedWeek = issue.metadata?.plannedWeek;
   const completedWeek = issue.metadata?.completedWeek;
+  const tags = issue.metadata?.tags || [];
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
     <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}
+    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -97,8 +118,8 @@ function issueCard(issue) {
 function visibleIssues() {
   return state.issues.filter(issue => {
     const matchesProject = state.project === 'all' || issue.project === state.project;
-    const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
-    return matchesProject && matchesStatus(issue) && haystack.includes(state.query);
+    const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
+    return matchesProject && matchesStatus(issue) && matchesTags(issue) && haystack.includes(state.query);
   });
 }
 
@@ -166,7 +187,9 @@ async function loadIssues() {
     const data = await readApiResponse(response);
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
-    renderStatusFilter(); showDiagnostics(null); updateSummary(data.totals || {}); render();
+    state.tagCatalog = [...new Set([...(data.tags || []), ...state.issues.flatMap(issue => issue.metadata?.tags || [])])]
+      .sort((left, right) => left.localeCompare(right, 'ru'));
+    renderStatusFilter(); renderTagFilter(); showDiagnostics(null); updateSummary(data.totals || {}); render();
   } catch (error) {
     document.querySelectorAll('.cards').forEach(cards => { cards.innerHTML = `<div class="error-card"><strong>Не удалось загрузить задачи</strong><br>${escapeHtml(error.message)}</div>`; });
     document.querySelector('#integrationNotice').hidden = false;
@@ -201,6 +224,8 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   const completedWeekField = metadataForm.querySelector('.completed-week-field');
   completedWeekField.hidden = !issue.metadata?.completedWeek;
   metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
+  renderTagPicker(issue.metadata?.tags || []);
+  metadataForm.elements.newTag.value = '';
   metadataForm.elements.jiraDescription.value = issue.description || 'Описание в Jira не добавлено';
   metadataForm.elements.shortDescription.value = issue.metadata?.shortDescription || '';
   document.querySelector('#metadataSubtitle').textContent = `${issue.key} · ${issue.summary}`;
@@ -237,6 +262,19 @@ metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
   }
+});
+metadataForm.querySelector('.add-tag button').addEventListener('click', () => {
+  const input = metadataForm.elements.newTag;
+  const tag = input.value.trim();
+  if (!tag) return;
+  let canonicalTag = state.tagCatalog.find(item => item.toLowerCase() === tag.toLowerCase());
+  if (!canonicalTag) {
+    state.tagCatalog.push(tag);
+    state.tagCatalog.sort((left, right) => left.localeCompare(right, 'ru'));
+    canonicalTag = tag;
+  }
+  renderTagPicker([...metadataForm.querySelectorAll('.tag-picker-options input:checked')].map(field => field.value).concat(canonicalTag));
+  input.value = '';
 });
 
 document.querySelectorAll('.column').forEach(column => {
@@ -276,13 +314,14 @@ metadataForm.addEventListener('submit', async event => {
   submit.disabled = true; submit.textContent = 'Сохраняем…'; errorBox.hidden = true;
   try {
     const values = Object.fromEntries(new FormData(metadataForm));
+    values.tags = [...metadataForm.querySelectorAll('.tag-picker-options input:checked')].map(field => field.value);
     ['plannedActions', 'facts'].forEach(name => {
       values[name] = [...metadataForm.querySelectorAll(`[data-history="${name}"] textarea`)].map(field => ({
         text: field.value,
         createdAt: field.dataset.entryDate
       }));
     });
-    await saveMetadata(values); closeMetadata(); showToast('План сохранён', `${values.issueKey} · ${bucketLabels[values.bucket]}`);
+    await saveMetadata(values); renderTagFilter(); closeMetadata(); showToast('План сохранён', `${values.issueKey} · ${bucketLabels[values.bucket]}`);
   } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
   finally { submit.disabled = false; submit.textContent = 'Сохранить'; }
 });
@@ -299,6 +338,14 @@ document.querySelector('#statusFilter').addEventListener('change', event => {
 });
 document.querySelector('#statusFilter .clear-statuses').addEventListener('click', () => {
   state.statuses.clear(); renderStatusFilter(); render();
+});
+document.querySelector('#tagFilter').addEventListener('change', event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) state.tags.add(event.target.value); else state.tags.delete(event.target.value);
+  renderTagFilter(); render();
+});
+document.querySelector('#tagFilter .clear-tags').addEventListener('click', () => {
+  state.tags.clear(); renderTagFilter(); render();
 });
 document.querySelector('#refreshBtn').addEventListener('click', loadIssues);
 document.querySelectorAll('.view-switch button').forEach(button => button.addEventListener('click', () => {
@@ -318,12 +365,12 @@ reportForm.addEventListener('submit', event => {
   const completedWeek = reportForm.elements.completedWeek.value;
   const plannedWeek = reportForm.elements.plannedWeek.value;
   const scopedIssues = state.issues.filter(issue =>
-    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue)
+    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
   const completed = scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek);
   const planned = scopedIssues.filter(issue => issue.metadata?.plannedWeek === plannedWeek && targetColumn(issue) !== 'completed');
-  const issueRow = issue => [issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary, issue.metadata?.shortDescription || issue.description || '', (issue.metadata?.plannedActions || []).map(entry => entry.text).join('\n'), (issue.metadata?.facts || []).map(entry => entry.text).join('\n')];
-  const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Краткое описание', 'Планируемые действия', 'Итог'];
+  const issueRow = issue => [issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary, (issue.metadata?.tags || []).join(', '), issue.metadata?.shortDescription || issue.description || '', (issue.metadata?.plannedActions || []).map(entry => entry.text).join('\n'), (issue.metadata?.facts || []).map(entry => entry.text).join('\n')];
+  const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Теги', 'Краткое описание', 'Планируемые действия', 'Итог'];
   const rows = [
     [`Итоги за неделю ${weekDateRange(completedWeek)}`], headers,
     ...completed.map(issueRow), [],

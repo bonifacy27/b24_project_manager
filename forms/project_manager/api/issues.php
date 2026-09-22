@@ -116,7 +116,7 @@ try {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
             'complexity' => 'medium', 'plannedWeek' => '', 'completedWeek' => '',
-            'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+            'tags' => [], 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
     }, $issues);
@@ -125,6 +125,7 @@ try {
     echo json_encode([
         'issues' => $issues,
         'totals' => $totals,
+        'tags' => $metadataStore->tags(),
         'syncedAt' => gmdate(DATE_ATOM),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
