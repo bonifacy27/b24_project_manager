@@ -67,8 +67,19 @@ try {
         }
         if (($input['action'] ?? '') === 'complete') {
             $comment = trim((string) ($input['comment'] ?? ''));
-            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $comment);
-            $metadata = $metadataStore->save($issue['key'], ['bucket' => 'completed', 'fact' => $comment]);
+            $currentUserLogin = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
+                ? trim((string) $USER->GetLogin())
+                : '';
+            if ($currentUserLogin === '') {
+                throw new RuntimeException('Не удалось определить пользователя, выполняющего заявку.');
+            }
+            $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $currentUserLogin);
+            $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
+            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $attributedComment);
+            $metadata = $metadataStore->save($issue['key'], [
+                'bucket' => 'completed',
+                'fact' => $currentUserLogin . ': ' . $comment,
+            ]);
             echo json_encode(
                 ['issue' => $issue, 'metadata' => $metadata],
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
