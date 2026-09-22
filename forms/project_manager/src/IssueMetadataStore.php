@@ -66,8 +66,12 @@ final class IssueMetadataStore
             throw new \InvalidArgumentException('Краткое описание не должно превышать 5000 символов.');
         }
 
-        $plannedActions = $current['plannedActions'] ?? [];
-        $facts = $current['facts'] ?? [];
+        $plannedActions = array_key_exists('plannedActions', $input)
+            ? $this->validateEntries($input['plannedActions'], $current['plannedActions'] ?? [])
+            : ($current['plannedActions'] ?? []);
+        $facts = array_key_exists('facts', $input)
+            ? $this->validateEntries($input['facts'], $current['facts'] ?? [])
+            : ($current['facts'] ?? []);
         $now = gmdate(DATE_ATOM);
         $this->appendEntry($plannedActions, (string) ($input['plannedAction'] ?? ''), $now);
         $this->appendEntry($facts, (string) ($input['fact'] ?? ''), $now);
@@ -110,6 +114,36 @@ final class IssueMetadataStore
             throw new \InvalidArgumentException('Текст действия или факта не должен превышать 10000 символов.');
         }
         $entries[] = ['text' => $text, 'createdAt' => $createdAt];
+    }
+
+    /** @return list<array{text: string, createdAt: string}> */
+    private function validateEntries(mixed $entries, array $currentEntries): array
+    {
+        if (!is_array($entries)) {
+            throw new \InvalidArgumentException('Некорректная история действий или фактов.');
+        }
+
+        $validated = [];
+        $knownDates = array_column($currentEntries, 'createdAt');
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $text = trim((string) ($entry['text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            if (mb_strlen($text) > 10000) {
+                throw new \InvalidArgumentException('Текст действия или факта не должен превышать 10000 символов.');
+            }
+            $createdAt = (string) ($entry['createdAt'] ?? '');
+            if ($createdAt === '' || !in_array($createdAt, $knownDates, true)) {
+                throw new \InvalidArgumentException('Некорректная дата действия или факта.');
+            }
+            $validated[] = ['text' => $text, 'createdAt' => $createdAt];
+        }
+
+        return $validated;
     }
 
     /** @param array<string, mixed> $row

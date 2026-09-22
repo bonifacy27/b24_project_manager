@@ -41,18 +41,29 @@ final class JiraClient
     }
 
     /** @return array{issues: list<array<string, mixed>>, total: int} */
-    public function search(string $jql, int $maxResults = 100): array
+    public function search(string $jql, int $pageSize = 100): array
     {
-        $response = $this->request('GET', '/rest/api/2/search', [
-            'jql' => $jql,
-            'startAt' => 0,
-            'maxResults' => min(max($maxResults, 1), 100),
-            'fields' => 'summary,status,priority,assignee,created,updated,duedate,issuetype,project,comment,issuelinks',
-        ]);
+        $pageSize = min(max($pageSize, 1), 100);
+        $startAt = 0;
+        $total = 0;
+        $issues = [];
+
+        do {
+            $response = $this->request('GET', '/rest/api/2/search', [
+                'jql' => $jql,
+                'startAt' => $startAt,
+                'maxResults' => $pageSize,
+                'fields' => 'summary,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+            ]);
+            $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
+            $issues = [...$issues, ...$page];
+            $total = (int) ($response['total'] ?? count($issues));
+            $startAt += count($page);
+        } while ($page !== [] && $startAt < $total);
 
         return [
-            'issues' => array_map(fn (array $issue): array => $this->normaliseIssue($issue), $response['issues'] ?? []),
-            'total' => (int) ($response['total'] ?? 0),
+            'issues' => array_map(fn (array $issue): array => $this->normaliseIssue($issue), $issues),
+            'total' => $total,
         ];
     }
 
@@ -161,6 +172,7 @@ final class JiraClient
             ] : null,
             'created' => (string) ($fields['created'] ?? ''),
             'updated' => (string) ($fields['updated'] ?? ''),
+            'resolved' => (string) ($fields['resolutiondate'] ?? ''),
             'dueDate' => $fields['duedate'] ?? null,
             'type' => (string) ($fields['issuetype']['name'] ?? ''),
             'comments' => (int) ($fields['comment']['total'] ?? 0),

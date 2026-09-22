@@ -91,9 +91,17 @@ try {
     $projects = $project === 'all' ? ['ods', 'ssis'] : [$project];
     $issues = [];
     $totals = [];
+    $currentUserLogin = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
+        ? trim((string) $USER->GetLogin())
+        : '';
+    if ($currentUserLogin === '') {
+        throw new RuntimeException('Не удалось определить LOGIN текущего пользователя Битрикс24.');
+    }
+    $jiraAssignee = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $currentUserLogin) . '"';
 
     foreach ($projects as $projectKey) {
-        $result = $client->search($config['jira']['jql'][$projectKey]);
+        $jql = sprintf($config['jira']['jql'][$projectKey], $jiraAssignee);
+        $result = $client->search($jql);
         $issues = [...$issues, ...$result['issues']];
         $totals[$projectKey] = $result['total'];
     }

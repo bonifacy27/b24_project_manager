@@ -31,8 +31,8 @@ function issueCard(issue) {
   const description = issue.metadata?.shortDescription
     ? `<p class="local-description">${escapeHtml(issue.metadata.shortDescription)}</p>`
     : '<p class="local-description muted">Краткое описание не добавлено</p>';
-  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}" data-url="${escapeHtml(issue.url)}">
-    <div class="card-top"><span class="key ${project}-key">${escapeHtml(issue.key)}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
+  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
+    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="status-pill">${escapeHtml(issue.status)}</span></div>
     <h3>${escapeHtml(issue.summary)}</h3>${description}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span></div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
@@ -59,8 +59,8 @@ function render() {
   document.querySelectorAll('.task-card').forEach(card => {
     const issue = findIssue(card.dataset.key);
     card.addEventListener('click', event => {
-      if (event.target.closest('.edit-metadata')) openMetadata(issue);
-      else if (card.dataset.url) window.open(card.dataset.url, '_blank', 'noopener');
+      if (event.target.closest('.issue-link')) return;
+      openMetadata(issue);
     });
     card.addEventListener('keydown', event => { if (event.key === 'Enter') openMetadata(issue); });
     card.addEventListener('dragstart', () => { state.draggedKey = card.dataset.key; card.classList.add('dragging'); });
@@ -132,7 +132,7 @@ function formatEntryDate(value) {
 function renderHistory(name, title, entries) {
   const block = metadataForm.querySelector(`[data-history="${name}"]`);
   block.innerHTML = entries?.length
-    ? `<strong>${title}</strong><ol>${entries.map(entry => `<li><time>${escapeHtml(formatEntryDate(entry.createdAt))}</time>${escapeHtml(entry.text)}</li>`).join('')}</ol>`
+    ? `<strong>${title}</strong><ol>${entries.map(entry => `<li><time>${escapeHtml(formatEntryDate(entry.createdAt))}</time><textarea maxlength="10000" data-entry-date="${escapeHtml(entry.createdAt)}">${escapeHtml(entry.text)}</textarea></li>`).join('')}</ol>`
     : `<strong>${title}</strong><p>Записей пока нет.</p>`;
 }
 function openMetadata(issue, bucket = targetColumn(issue)) {
@@ -203,6 +203,12 @@ metadataForm.addEventListener('submit', async event => {
   submit.disabled = true; submit.textContent = 'Сохраняем…'; errorBox.hidden = true;
   try {
     const values = Object.fromEntries(new FormData(metadataForm));
+    ['plannedActions', 'facts'].forEach(name => {
+      values[name] = [...metadataForm.querySelectorAll(`[data-history="${name}"] textarea`)].map(field => ({
+        text: field.value,
+        createdAt: field.dataset.entryDate
+      }));
+    });
     await saveMetadata(values); closeMetadata(); showToast('План сохранён', `${values.issueKey} · ${bucketLabels[values.bucket]}`);
   } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
   finally { submit.disabled = false; submit.textContent = 'Сохранить'; }
