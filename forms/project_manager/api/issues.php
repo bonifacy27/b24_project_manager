@@ -65,15 +65,70 @@ try {
         if (function_exists('bitrix_sessid') && !hash_equals((string) bitrix_sessid(), (string) ($input['sessid'] ?? ''))) {
             throw new InvalidArgumentException('Сессия истекла. Обновите страницу.');
         }
+        if (($input['action'] ?? '') === 'complete') {
+            $comment = trim((string) ($input['comment'] ?? ''));
+            $currentUserLogin = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
+                ? trim((string) $USER->GetLogin())
+                : '';
+            if ($currentUserLogin === '') {
+                throw new RuntimeException('Не удалось определить пользователя, выполняющего заявку.');
+            }
+            $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $currentUserLogin);
+            $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
+            $requestedLinkedKeys = is_array($input['linkedIssueKeys'] ?? null)
+                ? array_values(array_unique(array_map('strval', $input['linkedIssueKeys'])))
+                : [];
+            if (count($requestedLinkedKeys) > 20) {
+                throw new InvalidArgumentException('Можно выполнить не более 20 связанных заявок за один раз.');
+            }
+            $actualLinkedKeys = array_column(
+                $client->getLinkedIssues((string) ($input['issueKey'] ?? '')),
+                'key'
+            );
+            foreach ($requestedLinkedKeys as $linkedKey) {
+                if (!in_array($linkedKey, $actualLinkedKeys, true)) {
+                    throw new InvalidArgumentException('Выбрана заявка, которая не связана с основной заявкой Jira.');
+                }
+            }
+            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $attributedComment);
+            $metadata = $metadataStore->save($issue['key'], [
+                'bucket' => 'completed',
+                'fact' => $currentUserLogin . ': ' . $comment,
+            ]);
+            $linkedResults = [];
+            foreach ($requestedLinkedKeys as $linkedKey) {
+                try {
+                    $linkedIssue = $client->completeIssue($linkedKey, $attributedComment);
+                    $metadataStore->save($linkedIssue['key'], [
+                        'bucket' => 'completed',
+                        'fact' => $currentUserLogin . ': ' . $comment,
+                    ]);
+                    $linkedResults[] = $linkedIssue + ['error' => ''];
+                } catch (Throwable $linkedException) {
+                    $linkedResults[] = ['key' => $linkedKey, 'status' => '', 'error' => $linkedException->getMessage()];
+                }
+            }
+            echo json_encode(
+                ['issue' => $issue, 'metadata' => $metadata, 'linkedIssues' => $linkedResults],
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+            );
+            exit;
+        }
         $project = strtolower(trim((string) ($input['project'] ?? '')));
         $summary = trim((string) ($input['title'] ?? ''));
         $description = trim((string) ($input['description'] ?? ''));
+        $complexity = strtolower(trim((string) ($input['complexity'] ?? '')));
+        $componentId = trim((string) ($input['componentId'] ?? ''));
+        $fixVersionId = trim((string) ($input['fixVersionId'] ?? ''));
         $plan = strtolower((string) ($input['plan'] ?? 'later'));
         if (!isset($config['jira']['projects'][$project]) || !in_array($plan, ['week', 'next', 'later'], true)) {
             throw new InvalidArgumentException('Неверно указан проект или план.');
         }
         if ($summary === '' || mb_strlen($summary) > 255 || mb_strlen($description) > 10000) {
             throw new InvalidArgumentException('Название обязательно и должно быть короче 256 символов.');
+        }
+        if (!in_array($complexity, ['low', 'medium', 'high'], true)) {
+            throw new InvalidArgumentException('Неверно указана сложность заявки.');
         }
         $due = new DateTimeImmutable('today');
         $daysUntilSunday = 7 - (int) $due->format('N');
@@ -83,7 +138,37 @@ try {
             default => null,
         };
         $settings = $config['jira']['projects'][$project];
-        $issue = $client->createIssue($settings['key'], $settings['issue_type'], $summary, $description, $dueDate);
+        $requiredFields = $settings['required_create_fields'] ?? [];
+        if ((in_array('component', $requiredFields, true) && $componentId === '')
+            || (in_array('fixVersion', $requiredFields, true) && $fixVersionId === '')) {
+            throw new InvalidArgumentException('Для проекта ODS выберите компонент и версию исправления.');
+        }
+        foreach ([$componentId, $fixVersionId] as $jiraId) {
+            if ($jiraId !== '' && !ctype_digit($jiraId)) {
+                throw new InvalidArgumentException('Некорректно выбраны компонент или версия исправления.');
+            }
+        }
+        $jiraCurrentUser = null;
+        if (!empty($settings['use_current_user'])) {
+            $jiraCurrentUser = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
+                ? trim((string) $USER->GetLogin())
+                : '';
+            if ($jiraCurrentUser === '') {
+                throw new RuntimeException('Не удалось определить пользователя для автора и исполнителя ODS.');
+            }
+        }
+        $issue = $client->createIssue(
+            $settings['key'],
+            $settings['issue_type'],
+            $summary,
+            $description,
+            $dueDate,
+            $componentId !== '' ? $componentId : null,
+            $fixVersionId !== '' ? $fixVersionId : null,
+            $jiraCurrentUser,
+            $jiraCurrentUser
+        );
+        $metadataStore->save($issue['key'], ['bucket' => 'backlog', 'complexity' => $complexity]);
         http_response_code(201);
         echo json_encode(['issue' => $issue], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         exit;
@@ -91,6 +176,7 @@ try {
     $projects = $project === 'all' ? ['ods', 'ssis'] : [$project];
     $issues = [];
     $totals = [];
+    $creationOptions = [];
     $currentUserLogin = isset($USER) && is_object($USER) && method_exists($USER, 'GetLogin')
         ? trim((string) $USER->GetLogin())
         : '';
@@ -104,13 +190,20 @@ try {
         $result = $client->search($jql);
         $issues = [...$issues, ...$result['issues']];
         $totals[$projectKey] = $result['total'];
+        $settings = $config['jira']['projects'][$projectKey];
+        if (($settings['required_create_fields'] ?? []) !== []) {
+            $creationOptions[$projectKey] = $client->getCreateOptions($settings['key']) + [
+                'requiredFields' => $settings['required_create_fields'],
+            ];
+        }
     }
 
     $metadata = $metadataStore->all();
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
-            'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+            'complexity' => 'medium', 'plannedWeek' => '', 'completedWeek' => '',
+            'tags' => [], 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
     }, $issues);
@@ -119,6 +212,8 @@ try {
     echo json_encode([
         'issues' => $issues,
         'totals' => $totals,
+        'tags' => $metadataStore->tags(),
+        'creationOptions' => $creationOptions,
         'syncedAt' => gmdate(DATE_ATOM),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
