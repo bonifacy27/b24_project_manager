@@ -93,8 +93,6 @@ try {
             if ($currentUserLogin === '') {
                 throw new RuntimeException('Не удалось определить пользователя, выполняющего заявку.');
             }
-            $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $currentUserLogin);
-            $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
             $requestedLinkedKeys = is_array($input['linkedIssueKeys'] ?? null)
                 ? array_values(array_unique(array_map('strval', $input['linkedIssueKeys'])))
                 : [];
@@ -110,7 +108,7 @@ try {
                     throw new InvalidArgumentException('Выбрана заявка, которая не связана с основной заявкой Jira.');
                 }
             }
-            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $attributedComment);
+            $issue = $client->completeIssue((string) ($input['issueKey'] ?? ''), $comment, $currentUserLogin);
             $metadata = $metadataStore->save($issue['key'], [
                 'bucket' => 'completed',
                 'fact' => $currentUserLogin . ': ' . $comment,
@@ -118,7 +116,7 @@ try {
             $linkedResults = [];
             foreach ($requestedLinkedKeys as $linkedKey) {
                 try {
-                    $linkedIssue = $client->completeIssue($linkedKey, $attributedComment);
+                    $linkedIssue = $client->completeIssue($linkedKey, $comment, $currentUserLogin);
                     $metadataStore->save($linkedIssue['key'], [
                         'bucket' => 'completed',
                         'fact' => $currentUserLogin . ': ' . $comment,
@@ -147,7 +145,7 @@ try {
         if ($summary === '' || mb_strlen($summary) > 255 || mb_strlen($description) > 10000) {
             throw new InvalidArgumentException('Название обязательно и должно быть короче 256 символов.');
         }
-        if (!in_array($complexity, ['low', 'medium', 'high'], true)) {
+        if (!in_array($complexity, ['low', 'medium', 'high', 'maximum'], true)) {
             throw new InvalidArgumentException('Неверно указана сложность заявки.');
         }
         $due = new DateTimeImmutable('today');
@@ -244,7 +242,7 @@ try {
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
-            'complexity' => 'medium', 'plannedWeek' => '', 'completedWeek' => '',
+            'complexity' => 'low', 'plannedWeek' => '', 'completedWeek' => '',
             'tags' => [], 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
