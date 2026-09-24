@@ -143,6 +143,72 @@ function renderCreateFields() {
     .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
 }
 
+function matchesStatus(issue) {
+  return state.statuses.size === 0 || state.statuses.has(issue.status);
+}
+
+function renderStatusFilter() {
+  const filter = document.querySelector('#statusFilter');
+  const statuses = [...new Set(state.issues.map(issue => issue.status).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'ru'));
+  state.statuses = new Set([...state.statuses].filter(status => statuses.includes(status)));
+  filter.querySelector('.status-options').innerHTML = statuses.length
+    ? statuses.map(status => `<label><input type="checkbox" value="${escapeHtml(status)}"${state.statuses.has(status) ? ' checked' : ''}><span>${escapeHtml(status)}</span></label>`).join('')
+    : '<p>Статусы не найдены</p>';
+  filter.querySelector('summary').textContent = state.statuses.size
+    ? `Статусы Jira: ${state.statuses.size}`
+    : 'Все статусы Jira';
+}
+
+function matchesTags(issue) {
+  return state.tags.size === 0 || [...state.tags].every(tag => issue.metadata?.tags?.includes(tag));
+}
+
+function renderTagFilter() {
+  const filter = document.querySelector('#tagFilter');
+  state.tags = new Set([...state.tags].filter(tag => state.tagCatalog.includes(tag)));
+  filter.querySelector('.tag-filter-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${state.tags.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Теги ещё не добавлены</p>';
+  filter.querySelector('summary').textContent = state.tags.size ? `Теги: ${state.tags.size}` : 'Все теги';
+}
+
+function renderTagPicker(selectedTags = []) {
+  const selected = new Set(selectedTags);
+  metadataForm.querySelector('.tag-picker-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${selected.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Добавьте первый тег.</p>';
+}
+
+function canCompleteStatus(status) {
+  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+}
+
+function renderLinkedIssues(issue, allowCompletion) {
+  const block = metadataForm.querySelector('.linked-issues-block');
+  const links = issue.linkedIssues || [];
+  block.hidden = links.length === 0;
+  block.querySelector('.linked-issues-list').innerHTML = links.map(link => {
+    const canCompleteLinked = allowCompletion && canCompleteStatus(link.status);
+    return `<div class="linked-issue-row"><div><small>${escapeHtml(link.relationship || 'Связана')}</small><a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a><span>${escapeHtml(link.summary || 'Без названия')}</span><em>${escapeHtml(link.status || 'Без статуса')}</em></div>${canCompleteLinked ? `<label><input type="checkbox" name="linkedIssueKeys" value="${escapeHtml(link.key)}"> Также выполнить</label>` : ''}</div>`;
+  }).join('');
+}
+
+function renderCreateFields() {
+  const project = form.elements.project.value;
+  const options = state.creationOptions[project];
+  const fields = form.querySelector('.create-jira-fields');
+  const component = form.elements.componentId;
+  const version = form.elements.fixVersionId;
+  fields.hidden = !options;
+  component.required = Boolean(options?.requiredFields?.includes('component'));
+  version.required = Boolean(options?.requiredFields?.includes('fixVersion'));
+  component.innerHTML = '<option value="">Выберите компонент</option>' + (options?.components || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  version.innerHTML = '<option value="">Выберите версию</option>' + (options?.versions || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+}
+
 function issueCard(issue) {
   const project = issue.project === 'ssis' ? 'ssis' : 'ods';
   const avatar = issue.assignee?.avatar
