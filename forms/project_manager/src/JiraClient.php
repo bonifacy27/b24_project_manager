@@ -152,26 +152,59 @@ final class JiraClient
     }
 
     /** @return array{key: string, status: string} */
-    public function completeIssue(string $issueKey, string $comment): array
+    public function completeIssue(string $issueKey, string $comment, string $actingUser): array
     {
         $issueKey = strtoupper(trim($issueKey));
         $comment = trim($comment);
+        $actingUser = trim($actingUser);
         if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
             throw new \InvalidArgumentException('Неверно указан ключ Jira.');
         }
         if ($comment === '' || mb_strlen($comment) > 10000) {
             throw new \InvalidArgumentException('Для выполнения заявки укажите комментарий длиной до 10000 символов.');
         }
-
-        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), ['fields' => 'status']);
-        $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
-        if (!in_array(mb_strtolower(trim($currentStatus)), ['уточнение информации', 'взят в работу'], true)) {
-            throw new \InvalidArgumentException(
-                'Выполнить заявку можно только из статусов «Уточнение информации» или «Взят в работу».'
-            );
+        if ($actingUser === '' || mb_strlen($actingUser) > 255 || preg_match('/[\x00-\x1F\x7F]/u', $actingUser)) {
+            throw new \InvalidArgumentException('Не удалось определить пользователя Jira для выполнения заявки.');
         }
 
-        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', ['expand' => 'transitions.fields']);
+        // Keep an explicit Jira mention in the body even when sudo appears to
+        // succeed: some Jira installations silently ignore that parameter and
+        // still record the action under the integration account.
+        $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $actingUser);
+        $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
+
+        try {
+            return $this->performCompletion($issueKey, $attributedComment, ['sudo' => $actingUser]);
+        } catch (RuntimeException $impersonationError) {
+            // Not every Jira installation allows the integration account to
+            // impersonate users. Retry under the integration account while
+            // retaining the explicit attribution above.
+            try {
+                return $this->performCompletion($issueKey, $attributedComment);
+            } catch (\Throwable $fallbackError) {
+                throw new RuntimeException(
+                    'Не удалось выполнить заявку от имени текущего пользователя или системной учётной записи: '
+                    . $fallbackError->getMessage(),
+                    0,
+                    $impersonationError
+                );
+            }
+        }
+    }
+
+    /**
+     * @param array<string, string> $query
+     * @return array{key: string, status: string}
+     */
+    private function performCompletion(string $issueKey, string $comment, array $query = []): array
+    {
+        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), $query + ['fields' => 'status']);
+        $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
+        if (in_array(mb_strtolower(trim($currentStatus)), ['выполнено', 'закрыт'], true)) {
+            throw new \InvalidArgumentException('Заявка Jira уже выполнена или закрыта.');
+        }
+
+        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query + ['expand' => 'transitions.fields']);
         $transitions = is_array($response['transitions'] ?? null) ? $response['transitions'] : [];
         $transition = null;
         foreach ($transitions as $candidate) {
@@ -187,7 +220,7 @@ final class JiraClient
             throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
         }
 
-        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', [], [
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, [
             'transition' => ['id' => $transitionId],
             'update' => ['comment' => [['add' => ['body' => $comment]]]],
         ]);

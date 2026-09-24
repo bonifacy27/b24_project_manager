@@ -20,7 +20,7 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character =>
 const bucketLabels = Object.fromEntries(
   [...document.querySelectorAll('.column[data-column]')].map(column => [column.dataset.column, column.dataset.label])
 );
-const complexityLabels = { low: 'Низкий', medium: 'Средний', high: 'Высокий' };
+const complexityLabels = { low: 'Низкая', medium: 'Средняя', high: 'Высокая', maximum: 'Максимальная' };
 
 function truncate(value, length) {
   const characters = Array.from(String(value || ''));
@@ -104,8 +104,12 @@ function renderTagPicker(selectedTags = []) {
     : '<p>Добавьте первый тег.</p>';
 }
 
+function isJiraCompleted(status) {
+  return ['выполнено', 'закрыт'].includes(String(status || '').trim().toLowerCase());
+}
+
 function canCompleteStatus(status) {
-  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+  return !isJiraCompleted(status);
 }
 
 function renderLinkedIssues(issue, allowCompletion) {
@@ -181,7 +185,7 @@ function renderTagPicker(selectedTags = []) {
 }
 
 function canCompleteStatus(status) {
-  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+  return !isJiraCompleted(status);
 }
 
 function renderLinkedIssues(issue, allowCompletion) {
@@ -217,7 +221,7 @@ function issueCard(issue) {
   const jiraDescription = issue.description
     ? `<p class="jira-description-preview" title="${escapeHtml(issue.description)}">${escapeHtml(truncate(issue.description, 100))}</p>`
     : '<p class="jira-description-preview muted">Описание в Jira не добавлено</p>';
-  const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'medium';
+  const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'low';
   const plannedWeek = issue.metadata?.plannedWeek;
   const completedWeek = issue.metadata?.completedWeek;
   const tags = issue.metadata?.tags || [];
@@ -289,6 +293,7 @@ function render() {
     card.addEventListener('dragstart', () => { state.draggedKey = card.dataset.key; card.classList.add('dragging'); });
     card.addEventListener('dragend', () => { state.draggedKey = null; card.classList.remove('dragging'); });
   });
+  scheduleStickyColumnHeaders();
 }
 
 function findIssue(key) {
@@ -391,14 +396,21 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   if (!issue) return;
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
+  const jiraCompletionSuggested = bucket === 'completed' && !isJiraCompleted(issue.status);
+  document.querySelector('#metadataTitle').textContent = jiraCompletionSuggested
+    ? 'Выполнение заявки'
+    : 'План заявки';
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
   document.querySelector('#metadataJiraDetails').innerHTML = `<span>Инициатор: <strong>${escapeHtml(issue.reporter?.name || 'Не указан')}</strong></span><span>Создано: <strong>${escapeHtml(formatIssueDate(issue.created))}</strong></span><span>Обновлено: <strong>${escapeHtml(formatIssueDate(issue.updated))}</strong></span>`;
   const canCompleteInJira = canCompleteStatus(issue.status);
   metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
+  metadataForm.elements.completeComment.placeholder = jiraCompletionSuggested
+    ? 'Добавьте итоговый комментарий для выполнения заявки в Jira'
+    : 'Укажите результат выполнения заявки';
   metadataForm.elements.completeComment.value = '';
   metadataForm.elements.bucket.value = bucket;
-  metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
+  metadataForm.elements.complexity.value = issue.metadata?.complexity || 'low';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
     || (['week', 'next'].includes(bucket) ? weekForBucket(bucket) : '');
   const completedWeekField = metadataForm.querySelector('.completed-week-field');
@@ -519,6 +531,11 @@ document.querySelectorAll('.column').forEach(column => {
     const bucket = column.dataset.column;
     if (['year', 'next_year'].includes(bucket)) return;
     if (!issue || targetColumn(issue) === bucket) return;
+    if (bucket === 'completed' && !isJiraCompleted(issue.status)) {
+      openMetadata(issue, bucket);
+      metadataForm.elements.completeComment.focus();
+      return;
+    }
     if (targetColumn(issue) === 'backlog' && bucket !== 'backlog') { openMetadata(issue, bucket); return; }
     try {
       const values = { issueKey: issue.key, bucket, sessid: metadataForm.elements.sessid.value };
@@ -583,6 +600,17 @@ document.querySelectorAll('.project-tabs button').forEach(tab => tab.addEventLis
   document.querySelectorAll('.project-tabs button').forEach(item => item.classList.remove('active'));
   tab.classList.add('active'); state.project = tab.dataset.project; render();
 }));
+document.querySelectorAll('.entity-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.entity-tabs button').forEach(item => {
+    const selected = item === tab;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelector('#issuesPanel').hidden = tab.dataset.section !== 'issues';
+  document.querySelector('#projectsPanel').hidden = tab.dataset.section !== 'projects';
+  document.querySelector('.toolbar').hidden = tab.dataset.section !== 'issues';
+  document.querySelector('.board-hint').hidden = tab.dataset.section !== 'issues';
+}));
 document.querySelector('#searchInput').addEventListener('input', event => { state.query = event.target.value.trim().toLowerCase(); render(); });
 document.querySelector('#statusFilter').addEventListener('change', event => {
   if (!event.target.matches('input[type="checkbox"]')) return;
@@ -635,5 +663,31 @@ reportForm.addEventListener('submit', event => {
   link.download = `jira-report-${completedWeek}-${plannedWeek}.csv`; link.click(); URL.revokeObjectURL(link.href);
   closeReport(); showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
 });
+
+function updateStickyColumnHeaders() {
+  const stickyTop = document.querySelector('.entity-tabs').offsetHeight + 6;
+  document.querySelectorAll('.board-panel:not([hidden]) .column').forEach(column => {
+    const header = column.firstElementChild;
+    const columnRect = column.getBoundingClientRect();
+    const maximumOffset = Math.max(0, column.offsetHeight - header.offsetHeight);
+    const offset = Math.min(maximumOffset, Math.max(0, stickyTop - columnRect.top));
+    header.style.setProperty('--sticky-offset', `${offset}px`);
+  });
+}
+
+let stickyFrame = null;
+function scheduleStickyColumnHeaders() {
+  if (stickyFrame !== null) return;
+  stickyFrame = requestAnimationFrame(() => {
+    stickyFrame = null;
+    updateStickyColumnHeaders();
+  });
+}
+
+window.addEventListener('scroll', scheduleStickyColumnHeaders, { passive: true });
+window.addEventListener('resize', scheduleStickyColumnHeaders, { passive: true });
+document.querySelectorAll('.entity-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  requestAnimationFrame(updateStickyColumnHeaders);
+}));
 
 loadIssues();
