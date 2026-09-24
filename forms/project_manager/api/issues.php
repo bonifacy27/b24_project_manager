@@ -59,6 +59,7 @@ try {
             $savedProject = $metadataStore->saveProject(
                 isset($input['projectId']) && $input['projectId'] !== '' ? (int) $input['projectId'] : null,
                 (string) ($input['name'] ?? ''),
+                (string) ($input['description'] ?? ''),
                 (int) ($input['year'] ?? 0),
                 is_array($input['issueKeys'] ?? null) ? $input['issueKeys'] : []
             );

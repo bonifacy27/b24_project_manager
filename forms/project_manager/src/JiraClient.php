@@ -53,7 +53,7 @@ final class JiraClient
                 'jql' => $jql,
                 'startAt' => $startAt,
                 'maxResults' => $pageSize,
-                'fields' => 'summary,description,status,priority,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+                'fields' => 'summary,description,status,priority,reporter,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
             ]);
             $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
             $issues = [...$issues, ...$page];
@@ -267,6 +267,7 @@ final class JiraClient
     {
         $fields = $issue['fields'] ?? [];
         $assignee = $fields['assignee'] ?? null;
+        $reporter = $fields['reporter'] ?? null;
 
         return [
             'key' => (string) ($issue['key'] ?? ''),
@@ -279,6 +280,10 @@ final class JiraClient
             'assignee' => $assignee ? [
                 'name' => (string) ($assignee['displayName'] ?? $assignee['name'] ?? ''),
                 'avatar' => (string) ($assignee['avatarUrls']['48x48'] ?? ''),
+            ] : null,
+            'reporter' => $reporter ? [
+                'name' => (string) ($reporter['displayName'] ?? $reporter['name'] ?? ''),
+                'avatar' => (string) ($reporter['avatarUrls']['48x48'] ?? ''),
             ] : null,
             'created' => (string) ($fields['created'] ?? ''),
             'updated' => (string) ($fields['updated'] ?? ''),

@@ -27,6 +27,11 @@ function truncate(value, length) {
   return characters.length > length ? `${characters.slice(0, length).join('')}…` : characters.join('');
 }
 
+function formatIssueDate(value) {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' }).format(new Date(value));
+}
+
 function isoWeekValue(date = new Date()) {
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   target.setUTCDate(target.getUTCDate() + 4 - (target.getUTCDay() || 7));
@@ -115,8 +120,11 @@ function renderLinkedIssues(issue, allowCompletion) {
 
 function renderIssueProjects(issueKey) {
   const block = metadataForm.querySelector('.issue-project-options');
+  const attached = state.projects.filter(project => project.issueKeys.includes(issueKey));
+  const available = state.projects.filter(project => !project.issueKeys.includes(issueKey));
+  const option = (project, checked = false) => `<label><input type="checkbox" value="${project.id}"${checked ? ' checked' : ''}><span>${escapeHtml(project.name)}</span><em>${project.year}</em></label>`;
   block.innerHTML = state.projects.length
-    ? state.projects.map(project => `<label><input type="checkbox" value="${project.id}"${project.issueKeys.includes(issueKey) ? ' checked' : ''}><span>${escapeHtml(project.name)}</span><em>${project.year}</em></label>`).join('')
+    ? `${attached.map(project => option(project, true)).join('')}${available.length ? `<details><summary>Привязать ещё проект</summary><div>${available.map(project => option(project)).join('')}</div></details>` : ''}`
     : '<p>Проекты ещё не созданы.</p>';
 }
 
@@ -148,9 +156,10 @@ function issueCard(issue) {
   const completedWeek = issue.metadata?.completedWeek;
   const tags = issue.metadata?.tags || [];
   const linkedIssues = issue.linkedIssues || [];
+  const projects = state.projects.filter(item => item.issueKeys.includes(issue.key));
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
     <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+    <h3>${escapeHtml(issue.summary)}</h3><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -158,10 +167,13 @@ function issueCard(issue) {
 
 function projectCard(project) {
   const issues = project.issueKeys.map(findIssue).filter(Boolean);
+  const issueLink = issue => `<a class="issue-link" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener"><b>${escapeHtml(issue.key)}</b><span>${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></a>`;
+  const visibleIssues = issues.slice(0, 5);
+  const remainingIssues = issues.slice(5);
   return `<article class="task-card project-card" tabindex="0" data-project-id="${project.id}">
     <div class="card-top"><span class="key">ПРОЕКТ</span><span class="status-pill">${issues.length} заявок</span></div>
-    <h3>${escapeHtml(project.name)}</h3>
-    <div class="project-card-issues">${issues.length ? issues.map(issue => `<a class="issue-link" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener"><b>${escapeHtml(issue.key)}</b><span>${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></a>`).join('') : '<p>Заявки пока не привязаны</p>'}</div>
+    <h3>${escapeHtml(project.name)}</h3>${project.description ? `<p class="project-description">${escapeHtml(truncate(project.description, 140))}</p>` : ''}
+    <div class="project-card-issues">${issues.length ? visibleIssues.map(issueLink).join('') + (remainingIssues.length ? `<details><summary>Ещё ${remainingIssues.length}</summary>${remainingIssues.map(issueLink).join('')}</details>` : '') : '<p>Заявки пока не привязаны</p>'}</div>
     <button class="edit-project" type="button">✎ Проект</button>
   </article>`;
 }
@@ -196,7 +208,7 @@ function render() {
   document.querySelectorAll('.task-card').forEach(card => {
     if (card.classList.contains('project-card')) {
       card.addEventListener('click', event => {
-        if (event.target.closest('.issue-link')) return;
+        if (event.target.closest('.issue-link') || event.target.closest('details')) return;
         openProjectModal(state.projects.find(project => project.id === Number(card.dataset.projectId)));
       });
       card.addEventListener('keydown', event => { if (event.key === 'Enter') openProjectModal(state.projects.find(project => project.id === Number(card.dataset.projectId))); });
@@ -278,15 +290,18 @@ function closeModal() { modal.hidden = true; form.querySelector('.form-error').h
 
 function renderProjectIssues(query = '') {
   const normalisedQuery = query.trim().toLowerCase();
-  projectForm.querySelector('.project-issue-options').innerHTML = state.issues
-    .filter(issue => !normalisedQuery || `${issue.key} ${issue.summary}`.toLowerCase().includes(normalisedQuery))
-    .map(issue => `<label><input type="checkbox" value="${escapeHtml(issue.key)}"${state.projectEditingIssues.has(issue.key) ? ' checked' : ''}><span><b>${escapeHtml(issue.key)}</b> ${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></label>`).join('') || '<p>Заявки не найдены.</p>';
+  const option = (issue, checked = false) => `<label><input type="checkbox" value="${escapeHtml(issue.key)}"${checked ? ' checked' : ''}><span><b>${escapeHtml(issue.key)}</b> ${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></label>`;
+  const attached = state.issues.filter(issue => state.projectEditingIssues.has(issue.key));
+  const available = state.issues.filter(issue => !state.projectEditingIssues.has(issue.key)
+    && (!normalisedQuery || `${issue.key} ${issue.summary}`.toLowerCase().includes(normalisedQuery)));
+  projectForm.querySelector('.project-issue-options').innerHTML = `${attached.length ? `<div class="attached-project-issues">${attached.map(issue => option(issue, true)).join('')}</div>` : '<p>Привязанных заявок пока нет.</p>'}${available.length ? `<details${normalisedQuery ? ' open' : ''}><summary>Привязать ещё заявки (${available.length})</summary><div>${available.map(issue => option(issue)).join('')}</div></details>` : ''}`;
 }
 
 function openProjectModal(project = null, year = new Date().getFullYear()) {
   projectForm.reset();
   projectForm.elements.projectId.value = project?.id || '';
   projectForm.elements.name.value = project?.name || '';
+  projectForm.elements.description.value = project?.description || '';
   projectForm.elements.year.value = String(project?.year || year);
   state.projectEditingIssues = new Set(project?.issueKeys || []);
   document.querySelector('#projectModalTitle').textContent = project ? 'Проект' : 'Новый проект';
@@ -311,6 +326,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
+  document.querySelector('#metadataJiraDetails').innerHTML = `<span>Инициатор: <strong>${escapeHtml(issue.reporter?.name || 'Не указан')}</strong></span><span>Создано: <strong>${escapeHtml(formatIssueDate(issue.created))}</strong></span><span>Обновлено: <strong>${escapeHtml(formatIssueDate(issue.updated))}</strong></span>`;
   const canCompleteInJira = canCompleteStatus(issue.status);
   metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
@@ -366,6 +382,7 @@ projectForm.querySelector('.project-issue-options').addEventListener('change', e
   if (!event.target.matches('input[type="checkbox"]')) return;
   if (event.target.checked) state.projectEditingIssues.add(event.target.value);
   else state.projectEditingIssues.delete(event.target.value);
+  renderProjectIssues(projectForm.querySelector('.project-issue-search input').value);
 });
 function closeReport() { reportModal.hidden = true; }
 reportModal.querySelector('.modal-close').addEventListener('click', closeReport);
