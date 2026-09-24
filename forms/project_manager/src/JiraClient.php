@@ -167,18 +167,41 @@ final class JiraClient
             throw new \InvalidArgumentException('Не удалось определить пользователя Jira для выполнения заявки.');
         }
 
-        // Jira Server/Data Center supports administrator impersonation through
-        // the sudo query parameter. This makes both the transition and its
-        // bundled comment appear as actions of the current Bitrix/Jira user.
-        $impersonation = ['sudo' => $actingUser];
+        try {
+            return $this->performCompletion($issueKey, $comment, ['sudo' => $actingUser]);
+        } catch (RuntimeException $impersonationError) {
+            // Not every Jira installation allows the integration account to
+            // impersonate users. Preserve the old, explicit attribution when
+            // sudo is unavailable instead of blocking issue completion.
+            $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $actingUser);
+            $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
 
-        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), $impersonation + ['fields' => 'status']);
+            try {
+                return $this->performCompletion($issueKey, $attributedComment);
+            } catch (\Throwable $fallbackError) {
+                throw new RuntimeException(
+                    'Не удалось выполнить заявку от имени текущего пользователя или системной учётной записи: '
+                    . $fallbackError->getMessage(),
+                    0,
+                    $impersonationError
+                );
+            }
+        }
+    }
+
+    /**
+     * @param array<string, string> $query
+     * @return array{key: string, status: string}
+     */
+    private function performCompletion(string $issueKey, string $comment, array $query = []): array
+    {
+        $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), $query + ['fields' => 'status']);
         $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
         if (in_array(mb_strtolower(trim($currentStatus)), ['выполнено', 'закрыт'], true)) {
             throw new \InvalidArgumentException('Заявка Jira уже выполнена или закрыта.');
         }
 
-        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $impersonation + ['expand' => 'transitions.fields']);
+        $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query + ['expand' => 'transitions.fields']);
         $transitions = is_array($response['transitions'] ?? null) ? $response['transitions'] : [];
         $transition = null;
         foreach ($transitions as $candidate) {
@@ -194,7 +217,7 @@ final class JiraClient
             throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
         }
 
-        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $impersonation, [
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, [
             'transition' => ['id' => $transitionId],
             'update' => ['comment' => [['add' => ['body' => $comment]]]],
         ]);
