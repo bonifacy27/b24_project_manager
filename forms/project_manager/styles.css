@@ -28,8 +28,10 @@
 .board-panel[hidden]{display:none}
 .issues-board{grid-template-columns:repeat(5,minmax(245px,1fr));overflow:visible}
 .projects-board{grid-template-columns:repeat(2,minmax(280px,1fr));overflow:visible}
-.column>header{position:sticky;top:46px;z-index:10;box-sizing:border-box;height:54px;min-height:54px;background:#f7f8fa;border-radius:7px}
+.kanban{align-items:stretch}
+.column{height:100%}
+.column>header{position:relative;z-index:10;box-sizing:border-box;height:54px;min-height:54px;background:#f7f8fa;border-radius:7px;transform:translateY(var(--sticky-offset,0));will-change:transform}
 .column>.cards{position:relative;z-index:1}
 .complexity.maximum{color:#fff;background:#8b45c6}
-@media(max-width:1050px){.issues-board,.projects-board{max-height:calc(100vh - 120px);overflow:auto}.issues-board{grid-template-columns:repeat(5,310px)}.projects-board{grid-template-columns:repeat(2,310px)}.column>header{top:0}}
+@media(max-width:1050px){.issues-board,.projects-board{max-height:none;overflow-x:auto;overflow-y:visible}.issues-board{grid-template-columns:repeat(5,310px)}.projects-board{grid-template-columns:repeat(2,310px)}}
 @media(max-width:720px){.issues-board{grid-template-columns:repeat(5,82vw)}.projects-board{grid-template-columns:repeat(2,82vw)}.entity-tabs{width:100%}.entity-tabs button{flex:1}}

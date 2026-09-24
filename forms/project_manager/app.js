@@ -289,6 +289,7 @@ function render() {
     card.addEventListener('dragstart', () => { state.draggedKey = card.dataset.key; card.classList.add('dragging'); });
     card.addEventListener('dragend', () => { state.draggedKey = null; card.classList.remove('dragging'); });
   });
+  scheduleStickyColumnHeaders();
 }
 
 function findIssue(key) {
@@ -646,5 +647,31 @@ reportForm.addEventListener('submit', event => {
   link.download = `jira-report-${completedWeek}-${plannedWeek}.csv`; link.click(); URL.revokeObjectURL(link.href);
   closeReport(); showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
 });
+
+function updateStickyColumnHeaders() {
+  const stickyTop = document.querySelector('.entity-tabs').offsetHeight + 6;
+  document.querySelectorAll('.board-panel:not([hidden]) .column').forEach(column => {
+    const header = column.firstElementChild;
+    const columnRect = column.getBoundingClientRect();
+    const maximumOffset = Math.max(0, column.offsetHeight - header.offsetHeight);
+    const offset = Math.min(maximumOffset, Math.max(0, stickyTop - columnRect.top));
+    header.style.setProperty('--sticky-offset', `${offset}px`);
+  });
+}
+
+let stickyFrame = null;
+function scheduleStickyColumnHeaders() {
+  if (stickyFrame !== null) return;
+  stickyFrame = requestAnimationFrame(() => {
+    stickyFrame = null;
+    updateStickyColumnHeaders();
+  });
+}
+
+window.addEventListener('scroll', scheduleStickyColumnHeaders, { passive: true });
+window.addEventListener('resize', scheduleStickyColumnHeaders, { passive: true });
+document.querySelectorAll('.entity-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  requestAnimationFrame(updateStickyColumnHeaders);
+}));
 
 loadIssues();
