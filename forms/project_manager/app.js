@@ -258,7 +258,7 @@ function visibleIssues() {
     const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
     const matchesSummary = state.summaryFilter === 'all'
       || (state.summaryFilter === 'week' && targetColumn(issue) === 'week')
-      || (state.summaryFilter === 'waiting' && String(issue.status || '').trim().toLowerCase() === 'уточнение информации')
+      || (state.summaryFilter === 'waiting' && /уточнение информации|waiting|pending|ожидает/i.test(issue.status || ''))
       || (state.summaryFilter === 'updated' && issue.updated?.slice(0, 10) === today);
     return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary && haystack.includes(state.query);
   });
@@ -315,7 +315,7 @@ function updateSummary(totals = {}) {
   document.querySelector('[data-project="all"] b').textContent = total;
   document.querySelector('#activeTotal').textContent = total;
   document.querySelector('#weekTotal').textContent = state.issues.filter(issue => targetColumn(issue) === 'week').length;
-  document.querySelector('#waitingTotal').textContent = state.issues.filter(issue => String(issue.status || '').trim().toLowerCase() === 'уточнение информации').length;
+  document.querySelector('#waitingTotal').textContent = state.issues.filter(issue => /уточнение информации|waiting|pending|ожидает/i.test(issue.status || '')).length;
   const today = new Date().toISOString().slice(0, 10);
   document.querySelector('#updatedTotal').textContent = state.issues.filter(issue => issue.updated?.slice(0, 10) === today).length;
 }
@@ -715,12 +715,23 @@ function openReportDataCheck(completedWeek, plannedWeek) {
   });
   if (!missing.size) { downloadReport(completedWeek, plannedWeek); return; }
   state.pendingReport = { completedWeek, plannedWeek };
-  reportDataForm.querySelector('.report-data-table').innerHTML = [...missing.values()].map(row => `
+  reportDataForm.querySelector('.report-data-table').innerHTML = `<div class="report-data-row report-data-head">
+      <strong>Задача</strong><strong>Дата</strong><strong>Название</strong><strong>Краткое описание</strong>
+      <strong>Планируемые действия</strong><strong>Итог</strong>
+    </div>` + [...missing.values()].map(row => {
+    const description = row.issue.metadata?.shortDescription || row.issue.description || '—';
+    const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
+    const existingFact = entriesForWeek(row.issue.metadata?.facts, completedWeek).map(entry => entry.text).join('\n');
+    return `
     <div class="report-data-row" data-key="${escapeHtml(row.issue.key)}">
-      <strong>${escapeHtml(row.issue.key)}</strong><span>${escapeHtml(row.issue.summary)}</span>
-      ${row.plan ? `<label>План (${escapeHtml(plannedWeek)})<textarea class="quick-plan" maxlength="10000"></textarea></label>` : '<i></i>'}
-      ${row.fact ? `<label>Факт (${escapeHtml(completedWeek)})<textarea class="quick-fact" maxlength="10000"></textarea></label>` : '<i></i>'}
-    </div>`).join('');
+      <strong>${escapeHtml(row.issue.key)}</strong>
+      <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
+      <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
+      <span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>
+      ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
+      ${row.fact ? `<label><span class="sr-only">Факт (${escapeHtml(completedWeek)})</span><textarea aria-label="Факт ${escapeHtml(completedWeek)}" class="quick-fact" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingFact || '—')}</span>`}
+    </div>`;
+  }).join('');
   reportModal.hidden = true; reportDataModal.hidden = false;
 }
 
