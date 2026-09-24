@@ -20,7 +20,7 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character =>
 const bucketLabels = Object.fromEntries(
   [...document.querySelectorAll('.column[data-column]')].map(column => [column.dataset.column, column.dataset.label])
 );
-const complexityLabels = { low: 'Низкий', medium: 'Средний', high: 'Высокий' };
+const complexityLabels = { low: 'Низкая', medium: 'Средняя', high: 'Высокая', maximum: 'Максимальная' };
 
 function truncate(value, length) {
   const characters = Array.from(String(value || ''));
@@ -217,7 +217,7 @@ function issueCard(issue) {
   const jiraDescription = issue.description
     ? `<p class="jira-description-preview" title="${escapeHtml(issue.description)}">${escapeHtml(truncate(issue.description, 100))}</p>`
     : '<p class="jira-description-preview muted">Описание в Jira не добавлено</p>';
-  const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'medium';
+  const complexity = complexityLabels[issue.metadata?.complexity] ? issue.metadata.complexity : 'low';
   const plannedWeek = issue.metadata?.plannedWeek;
   const completedWeek = issue.metadata?.completedWeek;
   const tags = issue.metadata?.tags || [];
@@ -398,7 +398,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
   metadataForm.elements.completeComment.value = '';
   metadataForm.elements.bucket.value = bucket;
-  metadataForm.elements.complexity.value = issue.metadata?.complexity || 'medium';
+  metadataForm.elements.complexity.value = issue.metadata?.complexity || 'low';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
     || (['week', 'next'].includes(bucket) ? weekForBucket(bucket) : '');
   const completedWeekField = metadataForm.querySelector('.completed-week-field');
@@ -582,6 +582,17 @@ metadataForm.addEventListener('submit', async event => {
 document.querySelectorAll('.project-tabs button').forEach(tab => tab.addEventListener('click', () => {
   document.querySelectorAll('.project-tabs button').forEach(item => item.classList.remove('active'));
   tab.classList.add('active'); state.project = tab.dataset.project; render();
+}));
+document.querySelectorAll('.entity-tabs button').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('.entity-tabs button').forEach(item => {
+    const selected = item === tab;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelector('#issuesPanel').hidden = tab.dataset.section !== 'issues';
+  document.querySelector('#projectsPanel').hidden = tab.dataset.section !== 'projects';
+  document.querySelector('.toolbar').hidden = tab.dataset.section !== 'issues';
+  document.querySelector('.board-hint').hidden = tab.dataset.section !== 'issues';
 }));
 document.querySelector('#searchInput').addEventListener('input', event => { state.query = event.target.value.trim().toLowerCase(); render(); });
 document.querySelector('#statusFilter').addEventListener('change', event => {

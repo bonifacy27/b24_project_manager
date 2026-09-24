@@ -13,8 +13,8 @@ final class IssueMetadataStore
     private const TAGS_TABLE = 'b_project_manager_tags';
     private const PROJECTS_TABLE = 'b_project_manager_projects';
     private const PROJECT_ISSUES_TABLE = 'b_project_manager_project_issues';
-    private const BUCKETS = ['backlog', 'week', 'next', 'completed'];
-    private const COMPLEXITIES = ['low', 'medium', 'high'];
+    private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'deferred'];
+    private const COMPLEXITIES = ['low', 'medium', 'high', 'maximum'];
 
     private readonly object $connection;
 
@@ -29,7 +29,7 @@ final class IssueMetadataStore
             'CREATE TABLE IF NOT EXISTS ' . self::TABLE . ' (' .
             ' ISSUE_KEY varchar(64) NOT NULL,' .
             ' BUCKET varchar(32) NOT NULL DEFAULT \'backlog\',' .
-            ' COMPLEXITY varchar(16) NOT NULL DEFAULT \'medium\',' .
+            ' COMPLEXITY varchar(16) NOT NULL DEFAULT \'low\',' .
             ' PLANNED_WEEK varchar(8) NULL,' .
             ' COMPLETED_WEEK varchar(8) NULL,' .
             ' TAGS text NULL,' .
@@ -77,7 +77,7 @@ final class IssueMetadataStore
         $complexityColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TABLE . " LIKE 'COMPLEXITY'")->fetch();
         if (!$complexityColumn) {
             $this->connection->queryExecute(
-                "ALTER TABLE " . self::TABLE . " ADD COMPLEXITY varchar(16) NOT NULL DEFAULT 'medium' AFTER BUCKET"
+                "ALTER TABLE " . self::TABLE . " ADD COMPLEXITY varchar(16) NOT NULL DEFAULT 'low' AFTER BUCKET"
             );
         }
         foreach (['PLANNED_WEEK', 'COMPLETED_WEEK'] as $column) {
@@ -261,7 +261,7 @@ final class IssueMetadataStore
         $current = $this->find($issueKey);
         $complexity = array_key_exists('complexity', $input)
             ? strtolower(trim((string) $input['complexity']))
-            : (string) ($current['complexity'] ?? 'medium');
+            : (string) ($current['complexity'] ?? 'low');
         if (!in_array($complexity, self::COMPLEXITIES, true)) {
             throw new \InvalidArgumentException('Неверно указана сложность заявки.');
         }
@@ -405,7 +405,7 @@ final class IssueMetadataStore
         return [
             'issueKey' => (string) $row['ISSUE_KEY'],
             'bucket' => in_array($row['BUCKET'], self::BUCKETS, true) ? $row['BUCKET'] : 'backlog',
-            'complexity' => in_array($row['COMPLEXITY'] ?? '', self::COMPLEXITIES, true) ? $row['COMPLEXITY'] : 'medium',
+            'complexity' => in_array($row['COMPLEXITY'] ?? '', self::COMPLEXITIES, true) ? $row['COMPLEXITY'] : 'low',
             'plannedWeek' => (string) ($row['PLANNED_WEEK'] ?? ''),
             'completedWeek' => (string) ($row['COMPLETED_WEEK'] ?? ''),
             'tags' => $this->decodeTags((string) ($row['TAGS'] ?? '')),

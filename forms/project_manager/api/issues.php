@@ -147,7 +147,7 @@ try {
         if ($summary === '' || mb_strlen($summary) > 255 || mb_strlen($description) > 10000) {
             throw new InvalidArgumentException('Название обязательно и должно быть короче 256 символов.');
         }
-        if (!in_array($complexity, ['low', 'medium', 'high'], true)) {
+        if (!in_array($complexity, ['low', 'medium', 'high', 'maximum'], true)) {
             throw new InvalidArgumentException('Неверно указана сложность заявки.');
         }
         $due = new DateTimeImmutable('today');
@@ -244,7 +244,7 @@ try {
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
             'issueKey' => $issue['key'], 'bucket' => 'backlog', 'shortDescription' => '',
-            'complexity' => 'medium', 'plannedWeek' => '', 'completedWeek' => '',
+            'complexity' => 'low', 'plannedWeek' => '', 'completedWeek' => '',
             'tags' => [], 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
         ];
         return $issue;
