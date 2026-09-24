@@ -11,7 +11,9 @@ final class IssueMetadataStore
 {
     private const TABLE = 'b_project_manager_issue_meta';
     private const TAGS_TABLE = 'b_project_manager_tags';
-    private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'year', 'next_year'];
+    private const PROJECTS_TABLE = 'b_project_manager_projects';
+    private const PROJECT_ISSUES_TABLE = 'b_project_manager_project_issues';
+    private const BUCKETS = ['backlog', 'week', 'next', 'completed'];
     private const COMPLEXITIES = ['low', 'medium', 'high'];
 
     private readonly object $connection;
@@ -43,6 +45,33 @@ final class IssueMetadataStore
             ' NAME varchar(64) NOT NULL,' .
             ' CREATED_AT datetime NOT NULL,' .
             ' PRIMARY KEY (NAME)' .
+            ')'
+        );
+        $this->connection->queryExecute(
+            'CREATE TABLE IF NOT EXISTS ' . self::PROJECTS_TABLE . ' (' .
+            ' ID int unsigned NOT NULL AUTO_INCREMENT,' .
+            ' NAME varchar(255) NOT NULL,' .
+            ' DESCRIPTION text NULL,' .
+            ' PLAN_YEAR smallint unsigned NOT NULL,' .
+            ' CREATED_AT datetime NOT NULL,' .
+            ' UPDATED_AT datetime NOT NULL,' .
+            ' PRIMARY KEY (ID)' .
+            ')'
+        );
+        $projectDescriptionColumn = $this->connection->query(
+            "SHOW COLUMNS FROM " . self::PROJECTS_TABLE . " LIKE 'DESCRIPTION'"
+        )->fetch();
+        if (!$projectDescriptionColumn) {
+            $this->connection->queryExecute(
+                'ALTER TABLE ' . self::PROJECTS_TABLE . ' ADD DESCRIPTION text NULL AFTER NAME'
+            );
+        }
+        $this->connection->queryExecute(
+            'CREATE TABLE IF NOT EXISTS ' . self::PROJECT_ISSUES_TABLE . ' (' .
+            ' PROJECT_ID int unsigned NOT NULL,' .
+            ' ISSUE_KEY varchar(64) NOT NULL,' .
+            ' PRIMARY KEY (PROJECT_ID, ISSUE_KEY),' .
+            ' KEY IX_ISSUE_KEY (ISSUE_KEY)' .
             ')'
         );
         $complexityColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TABLE . " LIKE 'COMPLEXITY'")->fetch();
@@ -100,6 +129,122 @@ final class IssueMetadataStore
         }
 
         return $tags;
+    }
+
+    /** @return list<array{id: int, name: string, description: string, year: int, issueKeys: list<string>}> */
+    public function projects(): array
+    {
+        $projects = [];
+        $result = $this->connection->query(
+            'SELECT P.ID, P.NAME, P.DESCRIPTION, P.PLAN_YEAR, PI.ISSUE_KEY FROM ' . self::PROJECTS_TABLE . ' P ' .
+            'LEFT JOIN ' . self::PROJECT_ISSUES_TABLE . ' PI ON PI.PROJECT_ID = P.ID ' .
+            'ORDER BY P.PLAN_YEAR, P.NAME, PI.ISSUE_KEY'
+        );
+        while ($row = $result->fetch()) {
+            $id = (int) $row['ID'];
+            $projects[$id] ??= [
+                'id' => $id,
+                'name' => (string) $row['NAME'],
+                'description' => (string) ($row['DESCRIPTION'] ?? ''),
+                'year' => (int) $row['PLAN_YEAR'],
+                'issueKeys' => [],
+            ];
+            if (!empty($row['ISSUE_KEY'])) {
+                $projects[$id]['issueKeys'][] = (string) $row['ISSUE_KEY'];
+            }
+        }
+
+        return array_values($projects);
+    }
+
+    /** @param list<string> $issueKeys
+     *  @return array{id: int, name: string, description: string, year: int, issueKeys: list<string>}
+     */
+    public function saveProject(?int $id, string $name, string $description, int $year, array $issueKeys): array
+    {
+        $name = trim($name);
+        $currentYear = (int) date('Y');
+        if ($name === '' || mb_strlen($name) > 255) {
+            throw new \InvalidArgumentException('Название проекта обязательно и не должно превышать 255 символов.');
+        }
+        $description = trim($description);
+        if (mb_strlen($description) > 10000) {
+            throw new \InvalidArgumentException('Описание проекта не должно превышать 10000 символов.');
+        }
+        if (!in_array($year, [$currentYear, $currentYear + 1], true)) {
+            throw new \InvalidArgumentException('Проект можно запланировать на текущий или следующий год.');
+        }
+        if (count($issueKeys) > 500) {
+            throw new \InvalidArgumentException('К проекту можно привязать не более 500 заявок.');
+        }
+        $validatedKeys = [];
+        foreach ($issueKeys as $issueKey) {
+            $issueKey = strtoupper(trim((string) $issueKey));
+            if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
+                throw new \InvalidArgumentException('Некорректный ключ заявки в проекте.');
+            }
+            $validatedKeys[$issueKey] = $issueKey;
+        }
+
+        $sql = $this->connection->getSqlHelper();
+        $safeName = $sql->forSql($name, 255);
+        $safeDescription = $sql->forSql($description);
+        $now = $sql->forSql(gmdate('Y-m-d H:i:s'));
+        if ($id === null) {
+            $this->connection->queryExecute(
+                'INSERT INTO ' . self::PROJECTS_TABLE . " (NAME, DESCRIPTION, PLAN_YEAR, CREATED_AT, UPDATED_AT) VALUES ('{$safeName}', '{$safeDescription}', {$year}, '{$now}', '{$now}')"
+            );
+            $id = (int) $this->connection->getInsertedId();
+        } else {
+            if ($id < 1 || !$this->connection->query('SELECT ID FROM ' . self::PROJECTS_TABLE . " WHERE ID = {$id}")->fetch()) {
+                throw new \InvalidArgumentException('Проект не найден.');
+            }
+            $this->connection->queryExecute(
+                'UPDATE ' . self::PROJECTS_TABLE . " SET NAME = '{$safeName}', DESCRIPTION = '{$safeDescription}', PLAN_YEAR = {$year}, UPDATED_AT = '{$now}' WHERE ID = {$id}"
+            );
+        }
+        $this->connection->queryExecute('DELETE FROM ' . self::PROJECT_ISSUES_TABLE . " WHERE PROJECT_ID = {$id}");
+        foreach ($validatedKeys as $issueKey) {
+            $safeKey = $sql->forSql($issueKey, 64);
+            $this->connection->queryExecute(
+                'INSERT INTO ' . self::PROJECT_ISSUES_TABLE . " (PROJECT_ID, ISSUE_KEY) VALUES ({$id}, '{$safeKey}')"
+            );
+        }
+
+        foreach ($this->projects() as $project) {
+            if ($project['id'] === $id) {
+                return $project;
+            }
+        }
+        throw new RuntimeException('Не удалось прочитать сохранённый проект.');
+    }
+
+    /** @param list<int|string> $projectIds */
+    public function setIssueProjects(string $issueKey, array $projectIds): void
+    {
+        $issueKey = strtoupper(trim($issueKey));
+        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey)) {
+            throw new \InvalidArgumentException('Некорректный ключ заявки.');
+        }
+        $ids = array_values(array_unique(array_map('intval', $projectIds)));
+        if (count($ids) > 100 || in_array(0, $ids, true)) {
+            throw new \InvalidArgumentException('Некорректный список проектов заявки.');
+        }
+        if ($ids !== []) {
+            $existing = $this->connection->query(
+                'SELECT COUNT(*) AS CNT FROM ' . self::PROJECTS_TABLE . ' WHERE ID IN (' . implode(',', $ids) . ')'
+            )->fetch();
+            if ((int) ($existing['CNT'] ?? 0) !== count($ids)) {
+                throw new \InvalidArgumentException('Один из выбранных проектов не найден.');
+            }
+        }
+        $safeKey = $this->connection->getSqlHelper()->forSql($issueKey, 64);
+        $this->connection->queryExecute('DELETE FROM ' . self::PROJECT_ISSUES_TABLE . " WHERE ISSUE_KEY = '{$safeKey}'");
+        foreach ($ids as $id) {
+            $this->connection->queryExecute(
+                'INSERT INTO ' . self::PROJECT_ISSUES_TABLE . " (PROJECT_ID, ISSUE_KEY) VALUES ({$id}, '{$safeKey}')"
+            );
+        }
     }
 
     /** @param array<string, mixed> $input

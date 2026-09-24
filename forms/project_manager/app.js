@@ -1,12 +1,14 @@
 const modal = document.querySelector('#modal');
 const metadataModal = document.querySelector('#metadataModal');
 const reportModal = document.querySelector('#reportModal');
+const projectModal = document.querySelector('#projectModal');
 const toast = document.querySelector('#toast');
 const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
-const state = { issues: [], project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null };
+const projectForm = document.querySelector('#projectForm');
+const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -23,6 +25,11 @@ const complexityLabels = { low: 'Низкий', medium: 'Средний', high: 
 function truncate(value, length) {
   const characters = Array.from(String(value || ''));
   return characters.length > length ? `${characters.slice(0, length).join('')}…` : characters.join('');
+}
+
+function formatIssueDate(value) {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' }).format(new Date(value));
 }
 
 function isoWeekValue(date = new Date()) {
@@ -55,7 +62,85 @@ function initials(name) {
 }
 
 function targetColumn(issue) {
-  return bucketLabels[issue.metadata?.bucket] ? issue.metadata.bucket : 'backlog';
+  return bucketLabels[issue.metadata?.bucket] && !['year', 'next_year'].includes(issue.metadata.bucket)
+    ? issue.metadata.bucket
+    : 'backlog';
+}
+
+function matchesStatus(issue) {
+  return state.statuses.size === 0 || state.statuses.has(issue.status);
+}
+
+function renderStatusFilter() {
+  const filter = document.querySelector('#statusFilter');
+  const statuses = [...new Set(state.issues.map(issue => issue.status).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'ru'));
+  state.statuses = new Set([...state.statuses].filter(status => statuses.includes(status)));
+  filter.querySelector('.status-options').innerHTML = statuses.length
+    ? statuses.map(status => `<label><input type="checkbox" value="${escapeHtml(status)}"${state.statuses.has(status) ? ' checked' : ''}><span>${escapeHtml(status)}</span></label>`).join('')
+    : '<p>Статусы не найдены</p>';
+  filter.querySelector('summary').textContent = state.statuses.size
+    ? `Статусы Jira: ${state.statuses.size}`
+    : 'Все статусы Jira';
+}
+
+function matchesTags(issue) {
+  return state.tags.size === 0 || [...state.tags].every(tag => issue.metadata?.tags?.includes(tag));
+}
+
+function renderTagFilter() {
+  const filter = document.querySelector('#tagFilter');
+  state.tags = new Set([...state.tags].filter(tag => state.tagCatalog.includes(tag)));
+  filter.querySelector('.tag-filter-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${state.tags.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Теги ещё не добавлены</p>';
+  filter.querySelector('summary').textContent = state.tags.size ? `Теги: ${state.tags.size}` : 'Все теги';
+}
+
+function renderTagPicker(selectedTags = []) {
+  const selected = new Set(selectedTags);
+  metadataForm.querySelector('.tag-picker-options').innerHTML = state.tagCatalog.length
+    ? state.tagCatalog.map(tag => `<label><input type="checkbox" value="${escapeHtml(tag)}"${selected.has(tag) ? ' checked' : ''}><span>${escapeHtml(tag)}</span></label>`).join('')
+    : '<p>Добавьте первый тег.</p>';
+}
+
+function canCompleteStatus(status) {
+  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+}
+
+function renderLinkedIssues(issue, allowCompletion) {
+  const block = metadataForm.querySelector('.linked-issues-block');
+  const links = issue.linkedIssues || [];
+  block.hidden = links.length === 0;
+  block.querySelector('.linked-issues-list').innerHTML = links.map(link => {
+    const canCompleteLinked = allowCompletion && canCompleteStatus(link.status);
+    return `<div class="linked-issue-row"><div><small>${escapeHtml(link.relationship || 'Связана')}</small><a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a><span>${escapeHtml(link.summary || 'Без названия')}</span><em>${escapeHtml(link.status || 'Без статуса')}</em></div>${canCompleteLinked ? `<label><input type="checkbox" name="linkedIssueKeys" value="${escapeHtml(link.key)}"> Также выполнить</label>` : ''}</div>`;
+  }).join('');
+}
+
+function renderIssueProjects(issueKey) {
+  const block = metadataForm.querySelector('.issue-project-options');
+  const attached = state.projects.filter(project => project.issueKeys.includes(issueKey));
+  const available = state.projects.filter(project => !project.issueKeys.includes(issueKey));
+  const option = (project, checked = false) => `<label><input type="checkbox" value="${project.id}"${checked ? ' checked' : ''}><span>${escapeHtml(project.name)}</span><em>${project.year}</em></label>`;
+  block.innerHTML = state.projects.length
+    ? `${attached.map(project => option(project, true)).join('')}${available.length ? `<details><summary>Привязать ещё проект</summary><div>${available.map(project => option(project)).join('')}</div></details>` : ''}`
+    : '<p>Проекты ещё не созданы.</p>';
+}
+
+function renderCreateFields() {
+  const project = form.elements.project.value;
+  const options = state.creationOptions[project];
+  const fields = form.querySelector('.create-jira-fields');
+  const component = form.elements.componentId;
+  const version = form.elements.fixVersionId;
+  fields.hidden = !options;
+  component.required = Boolean(options?.requiredFields?.includes('component'));
+  version.required = Boolean(options?.requiredFields?.includes('fixVersion'));
+  component.innerHTML = '<option value="">Выберите компонент</option>' + (options?.components || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  version.innerHTML = '<option value="">Выберите версию</option>' + (options?.versions || [])
+    .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
 }
 
 function matchesStatus(issue) {
@@ -137,16 +222,31 @@ function issueCard(issue) {
   const completedWeek = issue.metadata?.completedWeek;
   const tags = issue.metadata?.tags || [];
   const linkedIssues = issue.linkedIssues || [];
+  const projects = state.projects.filter(item => item.issueKeys.includes(issue.key));
   return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
     <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3>${jiraDescription}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+    <h3>${escapeHtml(issue.summary)}</h3><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
 }
 
+function projectCard(project) {
+  const issues = project.issueKeys.map(findIssue).filter(Boolean);
+  const issueLink = issue => `<a class="issue-link" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener"><b>${escapeHtml(issue.key)}</b><span>${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></a>`;
+  const visibleIssues = issues.slice(0, 5);
+  const remainingIssues = issues.slice(5);
+  return `<article class="task-card project-card" tabindex="0" data-project-id="${project.id}">
+    <div class="card-top"><span class="key">ПРОЕКТ</span><span class="status-pill">${issues.length} заявок</span></div>
+    <h3>${escapeHtml(project.name)}</h3>${project.description ? `<p class="project-description">${escapeHtml(truncate(project.description, 140))}</p>` : ''}
+    <div class="project-card-issues">${issues.length ? visibleIssues.map(issueLink).join('') + (remainingIssues.length ? `<details><summary>Ещё ${remainingIssues.length}</summary>${remainingIssues.map(issueLink).join('')}</details>` : '') : '<p>Заявки пока не привязаны</p>'}</div>
+    <button class="edit-project" type="button">✎ Проект</button>
+  </article>`;
+}
+
 function visibleIssues() {
   return state.issues.filter(issue => {
+    if (issue.projectOnly) return false;
     const matchesProject = state.project === 'all' || issue.project === state.project;
     const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
     return matchesProject && matchesStatus(issue) && matchesTags(issue) && haystack.includes(state.query);
@@ -156,6 +256,15 @@ function visibleIssues() {
 function render() {
   const issues = visibleIssues();
   document.querySelectorAll('.column').forEach(column => {
+    if (['year', 'next_year'].includes(column.dataset.column)) {
+      const year = Number(column.dataset.label);
+      const projects = state.projects.filter(project => project.year === year);
+      column.querySelector('.cards').innerHTML = projects.length
+        ? projects.map(projectCard).join('')
+        : '<div class="empty-card">На этот год проектов пока нет.</div>';
+      column.querySelector('header b').textContent = projects.length;
+      return;
+    }
     const columnIssues = issues.filter(issue => targetColumn(issue) === column.dataset.column);
     column.querySelector('.cards').innerHTML = columnIssues.length
       ? columnIssues.map(issueCard).join('')
@@ -163,6 +272,14 @@ function render() {
     column.querySelector('header b').textContent = columnIssues.length;
   });
   document.querySelectorAll('.task-card').forEach(card => {
+    if (card.classList.contains('project-card')) {
+      card.addEventListener('click', event => {
+        if (event.target.closest('.issue-link') || event.target.closest('details')) return;
+        openProjectModal(state.projects.find(project => project.id === Number(card.dataset.projectId)));
+      });
+      card.addEventListener('keydown', event => { if (event.key === 'Enter') openProjectModal(state.projects.find(project => project.id === Number(card.dataset.projectId))); });
+      return;
+    }
     const issue = findIssue(card.dataset.key);
     card.addEventListener('click', event => {
       if (event.target.closest('.issue-link')) return;
@@ -217,6 +334,7 @@ async function loadIssues() {
     const data = await readApiResponse(response);
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
+    state.projects = Array.isArray(data.localProjects) ? data.localProjects : [];
     state.tagCatalog = [...new Set([...(data.tags || []), ...state.issues.flatMap(issue => issue.metadata?.tags || [])])]
       .sort((left, right) => left.localeCompare(right, 'ru'));
     state.creationOptions = data.creationOptions || {};
@@ -236,6 +354,30 @@ function showToast(title, detail, error = false) {
 function openModal() { renderCreateFields(); modal.hidden = false; form.elements.title.focus(); }
 function closeModal() { modal.hidden = true; form.querySelector('.form-error').hidden = true; }
 
+function renderProjectIssues(query = '') {
+  const normalisedQuery = query.trim().toLowerCase();
+  const option = (issue, checked = false) => `<label><input type="checkbox" value="${escapeHtml(issue.key)}"${checked ? ' checked' : ''}><span><b>${escapeHtml(issue.key)}</b> ${escapeHtml(issue.summary)}</span><em>${escapeHtml(issue.status)}</em></label>`;
+  const attached = state.issues.filter(issue => state.projectEditingIssues.has(issue.key));
+  const available = state.issues.filter(issue => !state.projectEditingIssues.has(issue.key)
+    && (!normalisedQuery || `${issue.key} ${issue.summary}`.toLowerCase().includes(normalisedQuery)));
+  projectForm.querySelector('.project-issue-options').innerHTML = `${attached.length ? `<div class="attached-project-issues">${attached.map(issue => option(issue, true)).join('')}</div>` : '<p>Привязанных заявок пока нет.</p>'}${available.length ? `<details${normalisedQuery ? ' open' : ''}><summary>Привязать ещё заявки (${available.length})</summary><div>${available.map(issue => option(issue)).join('')}</div></details>` : ''}`;
+}
+
+function openProjectModal(project = null, year = new Date().getFullYear()) {
+  projectForm.reset();
+  projectForm.elements.projectId.value = project?.id || '';
+  projectForm.elements.name.value = project?.name || '';
+  projectForm.elements.description.value = project?.description || '';
+  projectForm.elements.year.value = String(project?.year || year);
+  state.projectEditingIssues = new Set(project?.issueKeys || []);
+  document.querySelector('#projectModalTitle').textContent = project ? 'Проект' : 'Новый проект';
+  renderProjectIssues();
+  projectForm.querySelector('.project-issue-search input').value = '';
+  projectModal.hidden = false;
+  projectForm.elements.name.focus();
+}
+function closeProjectModal() { projectModal.hidden = true; projectForm.querySelector('.form-error').hidden = true; }
+
 function formatEntryDate(value) {
   return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value));
 }
@@ -250,6 +392,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
+  document.querySelector('#metadataJiraDetails').innerHTML = `<span>Инициатор: <strong>${escapeHtml(issue.reporter?.name || 'Не указан')}</strong></span><span>Создано: <strong>${escapeHtml(formatIssueDate(issue.created))}</strong></span><span>Обновлено: <strong>${escapeHtml(formatIssueDate(issue.updated))}</strong></span>`;
   const canCompleteInJira = canCompleteStatus(issue.status);
   metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
@@ -262,6 +405,7 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   completedWeekField.hidden = !issue.metadata?.completedWeek;
   metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
   renderLinkedIssues(issue, canCompleteInJira);
+  renderIssueProjects(issue.key);
   renderTagPicker(issue.metadata?.tags || []);
   metadataForm.elements.newTag.value = '';
   metadataForm.elements.jiraDescription.value = issue.description || 'Описание в Jira не добавлено';
@@ -280,11 +424,15 @@ async function saveMetadata(values) {
   if (!response.ok) throw new Error(data.error || `Ошибка сохранения (${response.status})`);
   const issue = findIssue(values.issueKey);
   if (issue) issue.metadata = data.metadata;
+  if (Array.isArray(data.localProjects)) state.projects = data.localProjects;
   updateSummary(); render();
 }
 
 document.querySelector('#createBtn').addEventListener('click', openModal);
 document.querySelectorAll('.add-card').forEach(button => button.addEventListener('click', openModal));
+document.querySelectorAll('.add-project').forEach(button => button.addEventListener('click', () => {
+  openProjectModal(null, Number(button.closest('.column').dataset.label));
+}));
 modal.querySelector('.modal-close').addEventListener('click', closeModal);
 modal.querySelector('.cancel').addEventListener('click', closeModal);
 modal.addEventListener('click', event => { if (event.target === modal) closeModal(); });
@@ -292,11 +440,21 @@ form.elements.project.addEventListener('change', renderCreateFields);
 metadataModal.querySelector('.modal-close').addEventListener('click', closeMetadata);
 metadataModal.querySelector('.cancel').addEventListener('click', closeMetadata);
 metadataModal.addEventListener('click', event => { if (event.target === metadataModal) closeMetadata(); });
+projectModal.querySelector('.modal-close').addEventListener('click', closeProjectModal);
+projectModal.querySelector('.cancel').addEventListener('click', closeProjectModal);
+projectModal.addEventListener('click', event => { if (event.target === projectModal) closeProjectModal(); });
+projectForm.querySelector('.project-issue-search input').addEventListener('input', event => renderProjectIssues(event.target.value));
+projectForm.querySelector('.project-issue-options').addEventListener('change', event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  if (event.target.checked) state.projectEditingIssues.add(event.target.value);
+  else state.projectEditingIssues.delete(event.target.value);
+  renderProjectIssues(projectForm.querySelector('.project-issue-search input').value);
+});
 function closeReport() { reportModal.hidden = true; }
 reportModal.querySelector('.modal-close').addEventListener('click', closeReport);
 reportModal.querySelector('.cancel').addEventListener('click', closeReport);
 reportModal.addEventListener('click', event => { if (event.target === reportModal) closeReport(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeReport(); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); } });
 metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
@@ -353,12 +511,13 @@ metadataForm.querySelector('.complete-jira').addEventListener('click', async eve
 });
 
 document.querySelectorAll('.column').forEach(column => {
-  column.addEventListener('dragover', event => { event.preventDefault(); column.classList.add('drag-over'); });
+  column.addEventListener('dragover', event => { if (!['year', 'next_year'].includes(column.dataset.column)) { event.preventDefault(); column.classList.add('drag-over'); } });
   column.addEventListener('dragleave', event => { if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over'); });
   column.addEventListener('drop', async event => {
     event.preventDefault(); column.classList.remove('drag-over');
     const issue = findIssue(state.draggedKey);
     const bucket = column.dataset.column;
+    if (['year', 'next_year'].includes(bucket)) return;
     if (!issue || targetColumn(issue) === bucket) return;
     if (targetColumn(issue) === 'backlog' && bucket !== 'backlog') { openMetadata(issue, bucket); return; }
     try {
@@ -383,6 +542,24 @@ form.addEventListener('submit', async event => {
   finally { submit.disabled = false; submit.textContent = 'Создать заявку'; }
 });
 
+projectForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = projectForm.querySelector('[type="submit"]');
+  const errorBox = projectForm.querySelector('.form-error');
+  submit.disabled = true; submit.textContent = 'Сохраняем…'; errorBox.hidden = true;
+  try {
+    const values = Object.fromEntries(new FormData(projectForm));
+    values.issueKeys = [...state.projectEditingIssues];
+    const response = await fetch(apiUrl, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(values) });
+    const data = await readApiResponse(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка сохранения (${response.status})`);
+    const index = state.projects.findIndex(project => project.id === data.project.id);
+    if (index >= 0) state.projects[index] = data.project; else state.projects.push(data.project);
+    closeProjectModal(); render(); showToast('Проект сохранён', data.project.name);
+  } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
+  finally { submit.disabled = false; submit.textContent = 'Сохранить проект'; }
+});
+
 metadataForm.addEventListener('submit', async event => {
   event.preventDefault();
   const submit = metadataForm.querySelector('[type="submit"]'); const errorBox = metadataForm.querySelector('.form-error');
@@ -390,6 +567,7 @@ metadataForm.addEventListener('submit', async event => {
   try {
     const values = Object.fromEntries(new FormData(metadataForm));
     values.tags = [...metadataForm.querySelectorAll('.tag-picker-options input:checked')].map(field => field.value);
+    values.projectIds = [...metadataForm.querySelectorAll('.issue-project-options input:checked')].map(field => Number(field.value));
     ['plannedActions', 'facts'].forEach(name => {
       values[name] = [...metadataForm.querySelectorAll(`[data-history="${name}"] textarea`)].map(field => ({
         text: field.value,

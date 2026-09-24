@@ -55,8 +55,28 @@ try {
         if (function_exists('bitrix_sessid') && !hash_equals((string) bitrix_sessid(), (string) ($input['sessid'] ?? ''))) {
             throw new InvalidArgumentException('Сессия истекла. Обновите страницу.');
         }
+        if (($input['action'] ?? '') === 'saveProject') {
+            $savedProject = $metadataStore->saveProject(
+                isset($input['projectId']) && $input['projectId'] !== '' ? (int) $input['projectId'] : null,
+                (string) ($input['name'] ?? ''),
+                (string) ($input['description'] ?? ''),
+                (int) ($input['year'] ?? 0),
+                is_array($input['issueKeys'] ?? null) ? $input['issueKeys'] : []
+            );
+            echo json_encode(['project' => $savedProject], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+            exit;
+        }
         $metadata = $metadataStore->save((string) ($input['issueKey'] ?? ''), is_array($input) ? $input : []);
-        echo json_encode(['metadata' => $metadata], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        if (array_key_exists('projectIds', $input)) {
+            $metadataStore->setIssueProjects(
+                (string) ($input['issueKey'] ?? ''),
+                is_array($input['projectIds']) ? $input['projectIds'] : []
+            );
+        }
+        echo json_encode(
+            ['metadata' => $metadata, 'localProjects' => $metadataStore->projects()],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+        );
         exit;
     }
     $client = new JiraClient($config['jira']);
@@ -198,6 +218,28 @@ try {
         }
     }
 
+    $localProjects = $metadataStore->projects();
+    $loadedKeys = array_column($issues, 'key');
+    $projectIssueKeyGroups = array_map(
+        static fn (array $localProject): array => $localProject['issueKeys'],
+        $localProjects
+    );
+    $projectIssueKeys = array_values(array_unique(
+        $projectIssueKeyGroups === [] ? [] : array_merge(...$projectIssueKeyGroups)
+    ));
+    $missingProjectIssueKeys = array_values(array_diff($projectIssueKeys, $loadedKeys));
+    foreach (array_chunk($missingProjectIssueKeys, 100) as $keyChunk) {
+        if ($keyChunk === []) {
+            continue;
+        }
+        $projectIssues = $client->search('key in (' . implode(', ', $keyChunk) . ') ORDER BY updated DESC');
+        $projectOnlyIssues = array_map(static function (array $issue): array {
+            $issue['projectOnly'] = true;
+            return $issue;
+        }, $projectIssues['issues']);
+        $issues = [...$issues, ...$projectOnlyIssues];
+    }
+
     $metadata = $metadataStore->all();
     $issues = array_map(static function (array $issue) use ($metadata): array {
         $issue['metadata'] = $metadata[$issue['key']] ?? [
@@ -214,6 +256,7 @@ try {
         'totals' => $totals,
         'tags' => $metadataStore->tags(),
         'creationOptions' => $creationOptions,
+        'localProjects' => $localProjects,
         'syncedAt' => gmdate(DATE_ATOM),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {
