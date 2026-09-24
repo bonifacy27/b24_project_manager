@@ -60,6 +60,11 @@ $nextYear = $today->modify('+1 year')->format('Y');
           <button type="button" role="tab" aria-selected="false" aria-controls="projectsPanel" data-section="projects">Проекты</button>
         </div>
 
+        <div class="entity-tabs" role="tablist" aria-label="Разделы планирования">
+          <button class="active" type="button" role="tab" aria-selected="true" aria-controls="issuesPanel" data-section="issues">Запросы</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="projectsPanel" data-section="projects">Проекты</button>
+        </div>
+
         <div class="toolbar">
           <div class="project-tabs" role="tablist"><button class="active" data-project="all">Все проекты <b>—</b></button><button data-project="ods"><span class="project-dot ods"></span> ODS <b>—</b></button><button data-project="ssis"><span class="project-dot ssis"></span> SSIS <b>—</b></button></div>
           <div class="view-actions"><details class="tag-filter option-filter" id="tagFilter"><summary>Все теги</summary><div class="option-filter-menu"><div class="tag-filter-options option-list"></div><button type="button" class="clear-tags">Сбросить</button></div></details><details class="status-filter option-filter" id="statusFilter"><summary>Все статусы Jira</summary><div class="option-filter-menu"><div class="status-options option-list"></div><button type="button" class="clear-statuses">Сбросить</button></div></details><label class="issue-search" aria-label="Поиск заявок"><span>⌕</span><input id="searchInput" type="search" placeholder="Поиск"></label><button class="btn tertiary" id="refreshBtn" type="button">↻ <span>Обновить</span></button><div class="view-switch"><button class="active" type="button" data-view="board" aria-label="Канбан">▦</button><button type="button" data-view="list" aria-label="Список">☷</button></div></div>
