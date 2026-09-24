@@ -13,18 +13,23 @@ final class IssueMetadataStore
     private const TAGS_TABLE = 'b_project_manager_tags';
     private const PROJECTS_TABLE = 'b_project_manager_projects';
     private const PROJECT_ISSUES_TABLE = 'b_project_manager_project_issues';
+    private const ISSUE_TAGS_TABLE = 'b_project_manager_issue_tags';
+    private const LEGACY_USER_ID = 3532;
     private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'deferred'];
     private const COMPLEXITIES = ['low', 'medium', 'high', 'maximum'];
 
     private readonly object $connection;
 
-    public function __construct()
+    public function __construct(private readonly int $userId)
     {
         if (!class_exists(Application::class)) {
             throw new RuntimeException('Ядро Битрикс недоступно для хранения плана заявок.');
         }
 
         $this->connection = Application::getConnection();
+        if ($this->userId < 1) {
+            throw new RuntimeException('Некорректный пользователь хранилища плана.');
+        }
         $this->connection->queryExecute(
             'CREATE TABLE IF NOT EXISTS ' . self::TABLE . ' (' .
             ' ISSUE_KEY varchar(64) NOT NULL,' .
@@ -104,6 +109,42 @@ final class IssueMetadataStore
         if (!$tagsColumn) {
             $this->connection->queryExecute('ALTER TABLE ' . self::TABLE . ' ADD TAGS text NULL AFTER COMPLETED_WEEK');
         }
+        $this->ensureUserOwnership();
+    }
+
+    private function ensureUserOwnership(): void
+    {
+        $tagUserColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TAGS_TABLE . " LIKE 'USER_ID'")->fetch();
+        if (!$tagUserColumn) {
+            $this->connection->queryExecute('ALTER TABLE ' . self::TAGS_TABLE . ' DROP PRIMARY KEY');
+            $this->connection->queryExecute('ALTER TABLE ' . self::TAGS_TABLE . ' ADD USER_ID int unsigned NOT NULL DEFAULT ' . self::LEGACY_USER_ID . ' FIRST, ADD PRIMARY KEY (USER_ID, NAME)');
+        }
+        $projectUserColumn = $this->connection->query("SHOW COLUMNS FROM " . self::PROJECTS_TABLE . " LIKE 'USER_ID'")->fetch();
+        if (!$projectUserColumn) {
+            $this->connection->queryExecute('ALTER TABLE ' . self::PROJECTS_TABLE . ' ADD USER_ID int unsigned NOT NULL DEFAULT ' . self::LEGACY_USER_ID . ' AFTER ID, ADD KEY IX_USER_ID (USER_ID)');
+        }
+        $this->connection->queryExecute(
+            'CREATE TABLE IF NOT EXISTS ' . self::ISSUE_TAGS_TABLE . ' (' .
+            ' USER_ID int unsigned NOT NULL,' .
+            ' ISSUE_KEY varchar(64) NOT NULL,' .
+            ' TAG_NAME varchar(64) NOT NULL,' .
+            ' PRIMARY KEY (USER_ID, ISSUE_KEY, TAG_NAME),' .
+            ' KEY IX_TAG (USER_ID, TAG_NAME)' .
+            ')'
+        );
+
+        $legacyRows = $this->connection->query('SELECT ISSUE_KEY, TAGS FROM ' . self::TABLE . " WHERE TAGS IS NOT NULL AND TAGS <> ''");
+        $sql = $this->connection->getSqlHelper();
+        while ($row = $legacyRows->fetch()) {
+            foreach ($this->decodeTags((string) $row['TAGS']) as $tag) {
+                $safeKey = $sql->forSql((string) $row['ISSUE_KEY'], 64);
+                $safeTag = $sql->forSql($tag, 64);
+                $this->connection->queryExecute(
+                    'INSERT IGNORE INTO ' . self::ISSUE_TAGS_TABLE . ' (USER_ID, ISSUE_KEY, TAG_NAME) VALUES (' . self::LEGACY_USER_ID . ", '{$safeKey}', '{$safeTag}')"
+                );
+            }
+        }
+        $this->connection->queryExecute('UPDATE ' . self::TABLE . " SET TAGS = NULL WHERE TAGS IS NOT NULL AND TAGS <> ''");
     }
 
     /** @return array<string, array<string, mixed>> */
@@ -113,6 +154,7 @@ final class IssueMetadataStore
         $result = $this->connection->query('SELECT * FROM ' . self::TABLE);
         while ($row = $result->fetch()) {
             $item = $this->normaliseRow($row);
+            $item['tags'] = $this->issueTags($item['issueKey']);
             $items[$item['issueKey']] = $item;
         }
 
@@ -123,7 +165,7 @@ final class IssueMetadataStore
     public function tags(): array
     {
         $tags = [];
-        $result = $this->connection->query('SELECT NAME FROM ' . self::TAGS_TABLE . ' ORDER BY NAME');
+        $result = $this->connection->query('SELECT NAME FROM ' . self::TAGS_TABLE . ' WHERE USER_ID = ' . $this->userId . ' ORDER BY NAME');
         while ($row = $result->fetch()) {
             $tags[] = (string) $row['NAME'];
         }
@@ -138,7 +180,7 @@ final class IssueMetadataStore
         $result = $this->connection->query(
             'SELECT P.ID, P.NAME, P.DESCRIPTION, P.PLAN_YEAR, PI.ISSUE_KEY FROM ' . self::PROJECTS_TABLE . ' P ' .
             'LEFT JOIN ' . self::PROJECT_ISSUES_TABLE . ' PI ON PI.PROJECT_ID = P.ID ' .
-            'ORDER BY P.PLAN_YEAR, P.NAME, PI.ISSUE_KEY'
+            'WHERE P.USER_ID = ' . $this->userId . ' ORDER BY P.PLAN_YEAR, P.NAME, PI.ISSUE_KEY'
         );
         while ($row = $result->fetch()) {
             $id = (int) $row['ID'];
@@ -192,15 +234,15 @@ final class IssueMetadataStore
         $now = $sql->forSql(gmdate('Y-m-d H:i:s'));
         if ($id === null) {
             $this->connection->queryExecute(
-                'INSERT INTO ' . self::PROJECTS_TABLE . " (NAME, DESCRIPTION, PLAN_YEAR, CREATED_AT, UPDATED_AT) VALUES ('{$safeName}', '{$safeDescription}', {$year}, '{$now}', '{$now}')"
+                'INSERT INTO ' . self::PROJECTS_TABLE . " (USER_ID, NAME, DESCRIPTION, PLAN_YEAR, CREATED_AT, UPDATED_AT) VALUES ({$this->userId}, '{$safeName}', '{$safeDescription}', {$year}, '{$now}', '{$now}')"
             );
             $id = (int) $this->connection->getInsertedId();
         } else {
-            if ($id < 1 || !$this->connection->query('SELECT ID FROM ' . self::PROJECTS_TABLE . " WHERE ID = {$id}")->fetch()) {
+            if ($id < 1 || !$this->connection->query('SELECT ID FROM ' . self::PROJECTS_TABLE . " WHERE ID = {$id} AND USER_ID = {$this->userId}")->fetch()) {
                 throw new \InvalidArgumentException('Проект не найден.');
             }
             $this->connection->queryExecute(
-                'UPDATE ' . self::PROJECTS_TABLE . " SET NAME = '{$safeName}', DESCRIPTION = '{$safeDescription}', PLAN_YEAR = {$year}, UPDATED_AT = '{$now}' WHERE ID = {$id}"
+                'UPDATE ' . self::PROJECTS_TABLE . " SET NAME = '{$safeName}', DESCRIPTION = '{$safeDescription}', PLAN_YEAR = {$year}, UPDATED_AT = '{$now}' WHERE ID = {$id} AND USER_ID = {$this->userId}"
             );
         }
         $this->connection->queryExecute('DELETE FROM ' . self::PROJECT_ISSUES_TABLE . " WHERE PROJECT_ID = {$id}");
@@ -232,14 +274,17 @@ final class IssueMetadataStore
         }
         if ($ids !== []) {
             $existing = $this->connection->query(
-                'SELECT COUNT(*) AS CNT FROM ' . self::PROJECTS_TABLE . ' WHERE ID IN (' . implode(',', $ids) . ')'
+                'SELECT COUNT(*) AS CNT FROM ' . self::PROJECTS_TABLE . ' WHERE USER_ID = ' . $this->userId . ' AND ID IN (' . implode(',', $ids) . ')'
             )->fetch();
             if ((int) ($existing['CNT'] ?? 0) !== count($ids)) {
                 throw new \InvalidArgumentException('Один из выбранных проектов не найден.');
             }
         }
         $safeKey = $this->connection->getSqlHelper()->forSql($issueKey, 64);
-        $this->connection->queryExecute('DELETE FROM ' . self::PROJECT_ISSUES_TABLE . " WHERE ISSUE_KEY = '{$safeKey}'");
+        $this->connection->queryExecute(
+            'DELETE PI FROM ' . self::PROJECT_ISSUES_TABLE . ' PI INNER JOIN ' . self::PROJECTS_TABLE .
+            " P ON P.ID = PI.PROJECT_ID WHERE PI.ISSUE_KEY = '{$safeKey}' AND P.USER_ID = {$this->userId}"
+        );
         foreach ($ids as $id) {
             $this->connection->queryExecute(
                 'INSERT INTO ' . self::PROJECT_ISSUES_TABLE . " (PROJECT_ID, ISSUE_KEY) VALUES ({$id}, '{$safeKey}')"
@@ -296,8 +341,8 @@ final class IssueMetadataStore
             ? $this->validateEntries($input['facts'], $current['facts'] ?? [])
             : ($current['facts'] ?? []);
         $now = gmdate(DATE_ATOM);
-        $this->appendEntry($plannedActions, (string) ($input['plannedAction'] ?? ''), $now);
-        $this->appendEntry($facts, (string) ($input['fact'] ?? ''), $now);
+        $this->appendEntry($plannedActions, (string) ($input['plannedAction'] ?? ''), (string) ($input['plannedActionWeek'] ?? ''), $now);
+        $this->appendEntry($facts, (string) ($input['fact'] ?? ''), (string) ($input['factWeek'] ?? ''), $now);
 
         $sql = $this->connection->getSqlHelper();
         $values = [
@@ -306,7 +351,9 @@ final class IssueMetadataStore
             'complexity' => $sql->forSql($complexity, 16),
             'plannedWeek' => $sql->forSql($plannedWeek, 8),
             'completedWeek' => $sql->forSql($completedWeek, 8),
-            'tags' => $sql->forSql((string) json_encode($tags, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
+            // Per-user assignments live in ISSUE_TAGS_TABLE. Keep the legacy
+            // column empty so another user's tags are never migrated to 3532.
+            'tags' => '',
             'description' => $sql->forSql($shortDescription),
             'actions' => $sql->forSql((string) json_encode($plannedActions, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
             'facts' => $sql->forSql((string) json_encode($facts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)),
@@ -321,7 +368,16 @@ final class IssueMetadataStore
         foreach ($tags as $tag) {
             $safeTag = $sql->forSql($tag, 64);
             $this->connection->queryExecute(
-                "INSERT IGNORE INTO " . self::TAGS_TABLE . " (NAME, CREATED_AT) VALUES ('{$safeTag}', '{$values['updated']}')"
+                'INSERT IGNORE INTO ' . self::TAGS_TABLE . " (USER_ID, NAME, CREATED_AT) VALUES ({$this->userId}, '{$safeTag}', '{$values['updated']}')"
+            );
+        }
+        $this->connection->queryExecute(
+            'DELETE FROM ' . self::ISSUE_TAGS_TABLE . " WHERE USER_ID = {$this->userId} AND ISSUE_KEY = '{$values['key']}'"
+        );
+        foreach ($tags as $tag) {
+            $safeTag = $sql->forSql($tag, 64);
+            $this->connection->queryExecute(
+                'INSERT INTO ' . self::ISSUE_TAGS_TABLE . " (USER_ID, ISSUE_KEY, TAG_NAME) VALUES ({$this->userId}, '{$values['key']}', '{$safeTag}')"
             );
         }
 
@@ -333,11 +389,30 @@ final class IssueMetadataStore
     {
         $safeKey = $this->connection->getSqlHelper()->forSql($issueKey, 64);
         $row = $this->connection->query("SELECT * FROM " . self::TABLE . " WHERE ISSUE_KEY = '{$safeKey}'")->fetch();
-        return $row ? $this->normaliseRow($row) : null;
+        if (!$row) {
+            return null;
+        }
+        $item = $this->normaliseRow($row);
+        $item['tags'] = $this->issueTags($issueKey);
+        return $item;
     }
 
-    /** @param list<array<string, string>> $entries */
-    private function appendEntry(array &$entries, string $text, string $createdAt): void
+    /** @return list<string> */
+    private function issueTags(string $issueKey): array
+    {
+        $safeKey = $this->connection->getSqlHelper()->forSql($issueKey, 64);
+        $tags = [];
+        $result = $this->connection->query(
+            'SELECT TAG_NAME FROM ' . self::ISSUE_TAGS_TABLE . " WHERE USER_ID = {$this->userId} AND ISSUE_KEY = '{$safeKey}' ORDER BY TAG_NAME"
+        );
+        while ($row = $result->fetch()) {
+            $tags[] = (string) $row['TAG_NAME'];
+        }
+        return $tags;
+    }
+
+    /** @param list<array{text: string, week: string, createdAt: string}> $entries */
+    private function appendEntry(array &$entries, string $text, string $week, string $createdAt): void
     {
         $text = trim($text);
         if ($text === '') {
@@ -346,7 +421,11 @@ final class IssueMetadataStore
         if (mb_strlen($text) > 10000) {
             throw new \InvalidArgumentException('Текст действия или факта не должен превышать 10000 символов.');
         }
-        $entries[] = ['text' => $text, 'createdAt' => $createdAt];
+        $week = strtoupper(trim($week));
+        if (!preg_match('/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/', $week)) {
+            throw new \InvalidArgumentException('Для действия или факта укажите корректную неделю.');
+        }
+        $entries[] = ['text' => $text, 'week' => $week, 'createdAt' => $createdAt];
     }
 
     /** @return list<string> */
@@ -367,7 +446,7 @@ final class IssueMetadataStore
         return array_values($validated);
     }
 
-    /** @return list<array{text: string, createdAt: string}> */
+    /** @return list<array{text: string, week: string, createdAt: string}> */
     private function validateEntries(mixed $entries, array $currentEntries): array
     {
         if (!is_array($entries)) {
@@ -391,7 +470,14 @@ final class IssueMetadataStore
             if ($createdAt === '' || !in_array($createdAt, $knownDates, true)) {
                 throw new \InvalidArgumentException('Некорректная дата действия или факта.');
             }
-            $validated[] = ['text' => $text, 'createdAt' => $createdAt];
+            $week = strtoupper(trim((string) ($entry['week'] ?? '')));
+            if ($week === '') {
+                $week = (new \DateTimeImmutable($createdAt))->format('o-\WW');
+            }
+            if (!preg_match('/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/', $week)) {
+                throw new \InvalidArgumentException('Некорректная неделя действия или факта.');
+            }
+            $validated[] = ['text' => $text, 'week' => $week, 'createdAt' => $createdAt];
         }
 
         return $validated;
@@ -420,7 +506,15 @@ final class IssueMetadataStore
     private function decodeEntries(string $json): array
     {
         $entries = json_decode($json, true);
-        return is_array($entries) ? array_values(array_filter($entries, 'is_array')) : [];
+        if (!is_array($entries)) {
+            return [];
+        }
+        return array_values(array_map(static function (array $entry): array {
+            if (empty($entry['week']) && !empty($entry['createdAt'])) {
+                $entry['week'] = (new \DateTimeImmutable((string) $entry['createdAt']))->format('o-\WW');
+            }
+            return $entry;
+        }, array_filter($entries, 'is_array')));
     }
 
     /** @return list<string> */

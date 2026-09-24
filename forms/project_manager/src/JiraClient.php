@@ -167,15 +167,18 @@ final class JiraClient
             throw new \InvalidArgumentException('Не удалось определить пользователя Jira для выполнения заявки.');
         }
 
+        // Keep an explicit Jira mention in the body even when sudo appears to
+        // succeed: some Jira installations silently ignore that parameter and
+        // still record the action under the integration account.
+        $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $actingUser);
+        $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
+
         try {
-            return $this->performCompletion($issueKey, $comment, ['sudo' => $actingUser]);
+            return $this->performCompletion($issueKey, $attributedComment, ['sudo' => $actingUser]);
         } catch (RuntimeException $impersonationError) {
             // Not every Jira installation allows the integration account to
-            // impersonate users. Preserve the old, explicit attribution when
-            // sudo is unavailable instead of blocking issue completion.
-            $safeJiraLogin = str_replace(['[', ']', "\r", "\n"], '', $actingUser);
-            $attributedComment = "Комментарий от [~{$safeJiraLogin}]:\n\n{$comment}";
-
+            // impersonate users. Retry under the integration account while
+            // retaining the explicit attribution above.
             try {
                 return $this->performCompletion($issueKey, $attributedComment);
             } catch (\Throwable $fallbackError) {

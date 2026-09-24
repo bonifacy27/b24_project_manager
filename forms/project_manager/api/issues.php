@@ -49,7 +49,11 @@ if (!in_array($project, ['all', 'ods', 'ssis'], true)) {
 
 $client = null;
 try {
-    $metadataStore = new ProjectManager\IssueMetadataStore();
+    $currentUserId = isset($USER) && is_object($USER) && method_exists($USER, 'GetID') ? (int) $USER->GetID() : 0;
+    if ($currentUserId < 1) {
+        throw new RuntimeException('Не удалось определить пользователя Битрикс24.');
+    }
+    $metadataStore = new ProjectManager\IssueMetadataStore($currentUserId);
     if ($_SERVER['REQUEST_METHOD'] === 'PATCH') {
         $input = json_decode((string) file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
         if (function_exists('bitrix_sessid') && !hash_equals((string) bitrix_sessid(), (string) ($input['sessid'] ?? ''))) {
@@ -112,6 +116,7 @@ try {
             $metadata = $metadataStore->save($issue['key'], [
                 'bucket' => 'completed',
                 'fact' => $currentUserLogin . ': ' . $comment,
+                'factWeek' => (new DateTimeImmutable('today'))->format('o-\WW'),
             ]);
             $linkedResults = [];
             foreach ($requestedLinkedKeys as $linkedKey) {
@@ -120,6 +125,7 @@ try {
                     $metadataStore->save($linkedIssue['key'], [
                         'bucket' => 'completed',
                         'fact' => $currentUserLogin . ': ' . $comment,
+                        'factWeek' => (new DateTimeImmutable('today'))->format('o-\WW'),
                     ]);
                     $linkedResults[] = $linkedIssue + ['error' => ''];
                 } catch (Throwable $linkedException) {

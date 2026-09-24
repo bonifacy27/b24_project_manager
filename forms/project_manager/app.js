@@ -1,14 +1,16 @@
 const modal = document.querySelector('#modal');
 const metadataModal = document.querySelector('#metadataModal');
 const reportModal = document.querySelector('#reportModal');
+const reportDataModal = document.querySelector('#reportDataModal');
 const projectModal = document.querySelector('#projectModal');
 const toast = document.querySelector('#toast');
 const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
 const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
+const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
-const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null };
+const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -249,11 +251,16 @@ function projectCard(project) {
 }
 
 function visibleIssues() {
+  const today = new Date().toISOString().slice(0, 10);
   return state.issues.filter(issue => {
     if (issue.projectOnly) return false;
     const matchesProject = state.project === 'all' || issue.project === state.project;
     const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
-    return matchesProject && matchesStatus(issue) && matchesTags(issue) && haystack.includes(state.query);
+    const matchesSummary = state.summaryFilter === 'all'
+      || (state.summaryFilter === 'week' && targetColumn(issue) === 'week')
+      || (state.summaryFilter === 'waiting' && /уточнение информации|waiting|pending|ожидает/i.test(issue.status || ''))
+      || (state.summaryFilter === 'updated' && issue.updated?.slice(0, 10) === today);
+    return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary && haystack.includes(state.query);
   });
 }
 
@@ -308,7 +315,7 @@ function updateSummary(totals = {}) {
   document.querySelector('[data-project="all"] b').textContent = total;
   document.querySelector('#activeTotal').textContent = total;
   document.querySelector('#weekTotal').textContent = state.issues.filter(issue => targetColumn(issue) === 'week').length;
-  document.querySelector('#waitingTotal').textContent = state.issues.filter(issue => /ожида|waiting|pending/i.test(issue.status)).length;
+  document.querySelector('#waitingTotal').textContent = state.issues.filter(issue => /уточнение информации|waiting|pending|ожидает/i.test(issue.status || '')).length;
   const today = new Date().toISOString().slice(0, 10);
   document.querySelector('#updatedTotal').textContent = state.issues.filter(issue => issue.updated?.slice(0, 10) === today).length;
 }
@@ -389,7 +396,7 @@ function formatEntryDate(value) {
 function renderHistory(name, title, entries) {
   const block = metadataForm.querySelector(`[data-history="${name}"]`);
   block.innerHTML = entries?.length
-    ? `<strong>${title}</strong><ol>${entries.map(entry => `<li><time>${escapeHtml(formatEntryDate(entry.createdAt))}</time><textarea maxlength="10000" data-entry-date="${escapeHtml(entry.createdAt)}">${escapeHtml(entry.text)}</textarea></li>`).join('')}</ol>`
+    ? `<strong>${title}</strong><ol>${entries.map(entry => `<li><time>${escapeHtml(entry.week || 'Без недели')} · ${escapeHtml(formatEntryDate(entry.createdAt))}</time><textarea maxlength="10000" data-entry-date="${escapeHtml(entry.createdAt)}" data-entry-week="${escapeHtml(entry.week || '')}">${escapeHtml(entry.text)}</textarea></li>`).join('')}</ol>`
     : `<strong>${title}</strong><p>Записей пока нет.</p>`;
 }
 function openMetadata(issue, bucket = targetColumn(issue)) {
@@ -413,6 +420,8 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   metadataForm.elements.complexity.value = issue.metadata?.complexity || 'low';
   metadataForm.elements.plannedWeek.value = issue.metadata?.plannedWeek
     || (['week', 'next'].includes(bucket) ? weekForBucket(bucket) : '');
+  metadataForm.elements.plannedActionWeek.value = metadataForm.elements.plannedWeek.value || isoWeekValue();
+  metadataForm.elements.factWeek.value = issue.metadata?.completedWeek || isoWeekValue();
   const completedWeekField = metadataForm.querySelector('.completed-week-field');
   completedWeekField.hidden = !issue.metadata?.completedWeek;
   metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
@@ -466,7 +475,7 @@ function closeReport() { reportModal.hidden = true; }
 reportModal.querySelector('.modal-close').addEventListener('click', closeReport);
 reportModal.querySelector('.cancel').addEventListener('click', closeReport);
 reportModal.addEventListener('click', event => { if (event.target === reportModal) closeReport(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); reportDataModal.hidden = true; } });
 metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
@@ -588,7 +597,8 @@ metadataForm.addEventListener('submit', async event => {
     ['plannedActions', 'facts'].forEach(name => {
       values[name] = [...metadataForm.querySelectorAll(`[data-history="${name}"] textarea`)].map(field => ({
         text: field.value,
-        createdAt: field.dataset.entryDate
+        createdAt: field.dataset.entryDate,
+        week: field.dataset.entryWeek
       }));
     });
     await saveMetadata(values); renderTagFilter(); closeMetadata(); showToast('План сохранён', `${values.issueKey} · ${bucketLabels[values.bucket]}`);
@@ -600,6 +610,19 @@ document.querySelectorAll('.project-tabs button').forEach(tab => tab.addEventLis
   document.querySelectorAll('.project-tabs button').forEach(item => item.classList.remove('active'));
   tab.classList.add('active'); state.project = tab.dataset.project; render();
 }));
+function selectSummaryFilter(card) {
+  state.summaryFilter = card.dataset.summaryFilter;
+  document.querySelectorAll('.summary-card').forEach(item => item.classList.toggle('active', item === card));
+  render();
+}
+document.querySelectorAll('.summary-card').forEach(card => {
+  card.addEventListener('click', () => selectSummaryFilter(card));
+  card.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault(); selectSummaryFilter(card);
+    }
+  });
+});
 document.querySelectorAll('.entity-tabs button').forEach(tab => tab.addEventListener('click', () => {
   document.querySelectorAll('.entity-tabs button').forEach(item => {
     const selected = item === tab;
@@ -641,27 +664,128 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
   reportModal.hidden = false;
   reportForm.elements.completedWeek.focus();
 });
-reportForm.addEventListener('submit', event => {
-  event.preventDefault();
-  const completedWeek = reportForm.elements.completedWeek.value;
-  const plannedWeek = reportForm.elements.plannedWeek.value;
+function reportIssues(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
     (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
-  const completed = scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek);
-  const planned = scopedIssues.filter(issue => issue.metadata?.plannedWeek === plannedWeek && targetColumn(issue) !== 'completed');
-  const issueRow = issue => [issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary, (issue.metadata?.tags || []).join(', '), issue.metadata?.shortDescription || issue.description || '', (issue.metadata?.plannedActions || []).map(entry => entry.text).join('\n'), (issue.metadata?.facts || []).map(entry => entry.text).join('\n')];
+  return {
+    completed: scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek),
+    planned: scopedIssues.filter(issue => issue.metadata?.plannedWeek === plannedWeek && targetColumn(issue) !== 'completed')
+  };
+}
+
+function entriesForWeek(entries, week) {
+  return (entries || []).filter(entry => entry.week === week);
+}
+
+function requiresReportDetails(issue) {
+  return ['medium', 'high', 'maximum'].includes(issue.metadata?.complexity);
+}
+
+function downloadReport(completedWeek, plannedWeek) {
+  const { completed, planned } = reportIssues(completedWeek, plannedWeek);
+  const issueRow = (issue, planWeek, factWeek) => [
+    issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary,
+    (issue.metadata?.tags || []).join(', '), issue.metadata?.shortDescription || issue.description || '',
+    entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
+    entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
+  ];
+  const reportRows = (issues, planWeek, factWeek) => {
+    const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
+    const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
+    if (!supportIssues.length) return detailed;
+    const projects = [...new Set(supportIssues.flatMap(issue => {
+      const attached = state.projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
+      return attached.length ? attached : [issue.project.toUpperCase()];
+    }))];
+    const tags = [...new Set(supportIssues.flatMap(issue => issue.metadata?.tags || []))];
+    detailed.push([
+      supportIssues.map(issue => issue.key).join('\n'), '',
+      [...new Set(supportIssues.map(issue => issue.project.toUpperCase()))].join(', '),
+      'Заявки по техподдержке', tags.join(', '),
+      `Техподдержка по проектам ${projects.join(', ') || '—'}, ${tags.join(', ') || 'без тегов'}`,
+      '', 'Выполнено'
+    ]);
+    return detailed;
+  };
   const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Теги', 'Краткое описание', 'Планируемые действия', 'Итог'];
   const rows = [
     [`Итоги за неделю ${weekDateRange(completedWeek)}`], headers,
-    ...completed.map(issueRow), [],
+    ...reportRows(completed, completedWeek, completedWeek), [],
     [`План на неделю ${weekDateRange(plannedWeek)}`], headers,
-    ...planned.map(issueRow)
+    ...reportRows(planned, plannedWeek, plannedWeek)
   ];
   const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
-  const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
   link.download = `jira-report-${completedWeek}-${plannedWeek}.csv`; link.click(); URL.revokeObjectURL(link.href);
-  closeReport(); showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+  closeReport(); reportDataModal.hidden = true;
+  showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+}
+
+function openReportDataCheck(completedWeek, plannedWeek) {
+  const { completed, planned } = reportIssues(completedWeek, plannedWeek);
+  const missing = new Map();
+  completed.filter(requiresReportDetails).forEach(issue => {
+    if (!entriesForWeek(issue.metadata?.facts, completedWeek).length) missing.set(issue.key, { issue, fact: true, plan: false });
+  });
+  planned.filter(requiresReportDetails).forEach(issue => {
+    if (!entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length) {
+      const row = missing.get(issue.key) || { issue, fact: false, plan: false };
+      row.plan = true; missing.set(issue.key, row);
+    }
+  });
+  if (!missing.size) { downloadReport(completedWeek, plannedWeek); return; }
+  state.pendingReport = { completedWeek, plannedWeek };
+  reportDataForm.querySelector('.report-data-table').innerHTML = `<div class="report-data-row report-data-head">
+      <strong>Задача</strong><strong>Дата</strong><strong>Название</strong><strong>Краткое описание</strong>
+      <strong>Планируемые действия</strong><strong>Итог</strong>
+    </div>` + [...missing.values()].map(row => {
+    const description = row.issue.metadata?.shortDescription || row.issue.description || '—';
+    const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
+    const existingFact = entriesForWeek(row.issue.metadata?.facts, completedWeek).map(entry => entry.text).join('\n');
+    return `
+    <div class="report-data-row" data-key="${escapeHtml(row.issue.key)}">
+      <strong>${escapeHtml(row.issue.key)}</strong>
+      <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
+      <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
+      <span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>
+      ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
+      ${row.fact ? `<label><span class="sr-only">Факт (${escapeHtml(completedWeek)})</span><textarea aria-label="Факт ${escapeHtml(completedWeek)}" class="quick-fact" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingFact || '—')}</span>`}
+    </div>`;
+  }).join('');
+  reportModal.hidden = true; reportDataModal.hidden = false;
+}
+
+reportForm.addEventListener('submit', event => {
+  event.preventDefault();
+  openReportDataCheck(reportForm.elements.completedWeek.value, reportForm.elements.plannedWeek.value);
+});
+reportDataModal.querySelector('.modal-close').addEventListener('click', () => { reportDataModal.hidden = true; });
+reportDataModal.addEventListener('click', event => { if (event.target === reportDataModal) reportDataModal.hidden = true; });
+reportDataForm.querySelector('.skip').addEventListener('click', () => {
+  if (state.pendingReport) downloadReport(state.pendingReport.completedWeek, state.pendingReport.plannedWeek);
+});
+reportDataForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = reportDataForm.querySelector('[type="submit"]');
+  const errorBox = reportDataForm.querySelector('.form-error');
+  submit.disabled = true; errorBox.hidden = true;
+  try {
+    for (const row of reportDataForm.querySelectorAll('.report-data-row')) {
+      const issue = findIssue(row.dataset.key);
+      const plan = row.querySelector('.quick-plan')?.value.trim() || '';
+      const fact = row.querySelector('.quick-fact')?.value.trim() || '';
+      if (!plan && !fact) continue;
+      await saveMetadata({
+        issueKey: issue.key, bucket: targetColumn(issue), sessid: metadataForm.elements.sessid.value,
+        plannedAction: plan, plannedActionWeek: state.pendingReport.plannedWeek,
+        fact, factWeek: state.pendingReport.completedWeek
+      });
+    }
+    downloadReport(state.pendingReport.completedWeek, state.pendingReport.plannedWeek);
+  } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
+  finally { submit.disabled = false; }
 });
 
 function updateStickyColumnHeaders() {
