@@ -678,6 +678,10 @@ function entriesForWeek(entries, week) {
   return (entries || []).filter(entry => entry.week === week);
 }
 
+function requiresReportDetails(issue) {
+  return ['medium', 'high', 'maximum'].includes(issue.metadata?.complexity);
+}
+
 function downloadReport(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
   const issueRow = (issue, planWeek, factWeek) => [
@@ -686,12 +690,30 @@ function downloadReport(completedWeek, plannedWeek) {
     entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
     entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
   ];
+  const reportRows = (issues, planWeek, factWeek) => {
+    const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
+    const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
+    if (!supportIssues.length) return detailed;
+    const projects = [...new Set(supportIssues.flatMap(issue => {
+      const attached = state.projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
+      return attached.length ? attached : [issue.project.toUpperCase()];
+    }))];
+    const tags = [...new Set(supportIssues.flatMap(issue => issue.metadata?.tags || []))];
+    detailed.push([
+      supportIssues.map(issue => issue.key).join('\n'), '',
+      [...new Set(supportIssues.map(issue => issue.project.toUpperCase()))].join(', '),
+      'Заявки по техподдержке', tags.join(', '),
+      `Техподдержка по проектам ${projects.join(', ') || '—'}, ${tags.join(', ') || 'без тегов'}`,
+      '', 'Выполнено'
+    ]);
+    return detailed;
+  };
   const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Теги', 'Краткое описание', 'Планируемые действия', 'Итог'];
   const rows = [
     [`Итоги за неделю ${weekDateRange(completedWeek)}`], headers,
-    ...completed.map(issue => issueRow(issue, completedWeek, completedWeek)), [],
+    ...reportRows(completed, completedWeek, completedWeek), [],
     [`План на неделю ${weekDateRange(plannedWeek)}`], headers,
-    ...planned.map(issue => issueRow(issue, plannedWeek, plannedWeek))
+    ...reportRows(planned, plannedWeek, plannedWeek)
   ];
   const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
   const link = document.createElement('a');
@@ -704,10 +726,10 @@ function downloadReport(completedWeek, plannedWeek) {
 function openReportDataCheck(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
   const missing = new Map();
-  completed.forEach(issue => {
+  completed.filter(requiresReportDetails).forEach(issue => {
     if (!entriesForWeek(issue.metadata?.facts, completedWeek).length) missing.set(issue.key, { issue, fact: true, plan: false });
   });
-  planned.forEach(issue => {
+  planned.filter(requiresReportDetails).forEach(issue => {
     if (!entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length) {
       const row = missing.get(issue.key) || { issue, fact: false, plan: false };
       row.plan = true; missing.set(issue.key, row);
