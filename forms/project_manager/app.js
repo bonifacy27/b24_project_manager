@@ -104,8 +104,12 @@ function renderTagPicker(selectedTags = []) {
     : '<p>Добавьте первый тег.</p>';
 }
 
+function isJiraCompleted(status) {
+  return ['выполнено', 'закрыт'].includes(String(status || '').trim().toLowerCase());
+}
+
 function canCompleteStatus(status) {
-  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+  return !isJiraCompleted(status);
 }
 
 function renderLinkedIssues(issue, allowCompletion) {
@@ -181,7 +185,7 @@ function renderTagPicker(selectedTags = []) {
 }
 
 function canCompleteStatus(status) {
-  return ['уточнение информации', 'взят в работу'].includes(String(status || '').trim().toLowerCase());
+  return !isJiraCompleted(status);
 }
 
 function renderLinkedIssues(issue, allowCompletion) {
@@ -392,11 +396,18 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
   if (!issue) return;
   metadataForm.reset();
   metadataForm.elements.issueKey.value = issue.key;
+  const jiraCompletionSuggested = bucket === 'completed' && !isJiraCompleted(issue.status);
+  document.querySelector('#metadataTitle').textContent = jiraCompletionSuggested
+    ? 'Выполнение заявки'
+    : 'План заявки';
   document.querySelector('#metadataJiraStatus').textContent = issue.status || 'Без статуса';
   document.querySelector('#metadataJiraDetails').innerHTML = `<span>Инициатор: <strong>${escapeHtml(issue.reporter?.name || 'Не указан')}</strong></span><span>Создано: <strong>${escapeHtml(formatIssueDate(issue.created))}</strong></span><span>Обновлено: <strong>${escapeHtml(formatIssueDate(issue.updated))}</strong></span>`;
   const canCompleteInJira = canCompleteStatus(issue.status);
   metadataForm.querySelector('.complete-jira').hidden = !canCompleteInJira;
   metadataForm.querySelector('.complete-comment').hidden = !canCompleteInJira;
+  metadataForm.elements.completeComment.placeholder = jiraCompletionSuggested
+    ? 'Добавьте итоговый комментарий для выполнения заявки в Jira'
+    : 'Укажите результат выполнения заявки';
   metadataForm.elements.completeComment.value = '';
   metadataForm.elements.bucket.value = bucket;
   metadataForm.elements.complexity.value = issue.metadata?.complexity || 'low';
@@ -520,6 +531,11 @@ document.querySelectorAll('.column').forEach(column => {
     const bucket = column.dataset.column;
     if (['year', 'next_year'].includes(bucket)) return;
     if (!issue || targetColumn(issue) === bucket) return;
+    if (bucket === 'completed' && !isJiraCompleted(issue.status)) {
+      openMetadata(issue, bucket);
+      metadataForm.elements.completeComment.focus();
+      return;
+    }
     if (targetColumn(issue) === 'backlog' && bucket !== 'backlog') { openMetadata(issue, bucket); return; }
     try {
       const values = { issueKey: issue.key, bucket, sessid: metadataForm.elements.sessid.value };

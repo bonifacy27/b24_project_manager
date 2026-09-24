@@ -165,10 +165,8 @@ final class JiraClient
 
         $issue = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey), ['fields' => 'status']);
         $currentStatus = (string) ($issue['fields']['status']['name'] ?? '');
-        if (!in_array(mb_strtolower(trim($currentStatus)), ['уточнение информации', 'взят в работу'], true)) {
-            throw new \InvalidArgumentException(
-                'Выполнить заявку можно только из статусов «Уточнение информации» или «Взят в работу».'
-            );
+        if (in_array(mb_strtolower(trim($currentStatus)), ['выполнено', 'закрыт'], true)) {
+            throw new \InvalidArgumentException('Заявка Jira уже выполнена или закрыта.');
         }
 
         $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', ['expand' => 'transitions.fields']);
