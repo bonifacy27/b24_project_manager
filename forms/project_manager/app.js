@@ -692,6 +692,7 @@ async function downloadReport(completedWeek, plannedWeek) {
     created: issue.created?.slice(0, 10) || '',
     system: systemName(issue),
     description: issue.metadata?.shortDescription || '',
+    jiraDescription: issue.description || '',
     actions: entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
     result: entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
   });
@@ -708,6 +709,7 @@ async function downloadReport(completedWeek, plannedWeek) {
       created: '',
       system: [...new Set(supportIssues.map(systemName).filter(Boolean))].join(', '),
       description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
+      jiraDescription: supportIssues.map(issue => `${issue.key}: ${issue.description || '—'}`).join('\n\n'),
       actions: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text)).join('\n'),
       result: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text)).join('\n')
     });
@@ -721,7 +723,8 @@ async function downloadReport(completedWeek, plannedWeek) {
     task: issue.key,
     created: issue.created?.slice(0, 10) || '',
     status: [...(issue.metadata?.facts || [])].at(-1)?.text || '',
-    description: issue.metadata?.shortDescription || ''
+    description: issue.metadata?.shortDescription || '',
+    jiraDescription: issue.description || ''
   }));
   const submit = reportDataModal.hidden
     ? reportForm.querySelector('[type="submit"]')
@@ -763,11 +766,13 @@ function openReportDataCheck(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
   const missing = new Map();
   completed.filter(requiresReportDetails).forEach(issue => {
-    if (!entriesForWeek(issue.metadata?.facts, completedWeek).length) missing.set(issue.key, { issue, fact: true, plan: false });
+    const fact = !entriesForWeek(issue.metadata?.facts, completedWeek).length;
+    const description = !issue.metadata?.shortDescription?.trim();
+    if (fact || description) missing.set(issue.key, { issue, fact, plan: false, description });
   });
   planned.filter(requiresReportDetails).forEach(issue => {
     if (!entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length) {
-      const row = missing.get(issue.key) || { issue, fact: false, plan: false };
+      const row = missing.get(issue.key) || { issue, fact: false, plan: false, description: false };
       row.plan = true; missing.set(issue.key, row);
     }
   });
@@ -777,7 +782,7 @@ function openReportDataCheck(completedWeek, plannedWeek) {
       <strong>Задача</strong><strong>Дата</strong><strong>Название</strong><strong>Краткое описание</strong>
       <strong>Планируемые действия</strong><strong>Итог</strong>
     </div>` + [...missing.values()].map(row => {
-    const description = row.issue.metadata?.shortDescription || row.issue.description || '—';
+    const description = row.issue.metadata?.shortDescription || '';
     const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
     const existingFact = entriesForWeek(row.issue.metadata?.facts, completedWeek).map(entry => entry.text).join('\n');
     return `
@@ -785,7 +790,7 @@ function openReportDataCheck(completedWeek, plannedWeek) {
       <strong>${escapeHtml(row.issue.key)}</strong>
       <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
       <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
-      <span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>
+      ${row.description ? `<label><span class="sr-only">Краткое описание</span><textarea aria-label="Краткое описание" class="quick-description" maxlength="5000"></textarea></label>` : `<span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>`}
       ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
       ${row.fact ? `<label><span class="sr-only">Факт (${escapeHtml(completedWeek)})</span><textarea aria-label="Факт ${escapeHtml(completedWeek)}" class="quick-fact" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingFact || '—')}</span>`}
     </div>`;
@@ -812,9 +817,11 @@ reportDataForm.addEventListener('submit', async event => {
       const issue = findIssue(row.dataset.key);
       const plan = row.querySelector('.quick-plan')?.value.trim() || '';
       const fact = row.querySelector('.quick-fact')?.value.trim() || '';
-      if (!plan && !fact) continue;
+      const shortDescription = row.querySelector('.quick-description')?.value.trim() || '';
+      if (!plan && !fact && !shortDescription) continue;
       await saveMetadata({
         issueKey: issue.key, bucket: targetColumn(issue), sessid: metadataForm.elements.sessid.value,
+        ...(shortDescription ? { shortDescription } : {}),
         plannedAction: plan, plannedActionWeek: state.pendingReport.plannedWeek,
         fact, factWeek: state.pendingReport.completedWeek
       });

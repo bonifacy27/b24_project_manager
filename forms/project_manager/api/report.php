@@ -50,8 +50,8 @@ try {
             return $normalised;
         }, array_values($rows));
     };
-    $mainFields = ['task', 'created', 'system', 'description', 'actions', 'result'];
-    $otherFields = ['task', 'created', 'status', 'description'];
+    $mainFields = ['task', 'created', 'system', 'description', 'jiraDescription', 'actions', 'result'];
+    $otherFields = ['task', 'created', 'status', 'description', 'jiraDescription'];
     require '/home/bitrix/www/vendor2/autoload.php';
     require_once dirname(__DIR__) . '/src/ReportExporter.php';
     (new ProjectManager\ReportExporter())->export(

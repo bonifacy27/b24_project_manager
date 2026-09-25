@@ -31,6 +31,7 @@ final class ReportExporter
             $this->writeRow($sheet, $row, [
                 $item['task'] ?? '', $item['created'] ?? '', '', $item['status'] ?? '', $item['description'] ?? '', '',
             ]);
+            $this->addDescriptionNote($sheet, $row, (string) ($item['jiraDescription'] ?? ''));
             $this->formatDateCell($sheet, $row++);
         }
 
@@ -67,6 +68,7 @@ final class ReportExporter
                 $item['task'] ?? '', $item['created'] ?? '', $item['system'] ?? '', $item['description'] ?? '',
                 $item['actions'] ?? '', $item['result'] ?? '',
             ]);
+            $this->addDescriptionNote($sheet, $row, (string) ($item['jiraDescription'] ?? ''));
             $this->formatDateCell($sheet, $row++);
         }
         return $row;
@@ -110,5 +112,15 @@ final class ReportExporter
         }
         $sheet->setCellValueExplicit($cell, $timestamp / 86400 + 25569, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC);
         $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('dd.mm.yyyy');
+    }
+
+    private function addDescriptionNote(object $sheet, int $row, string $description): void
+    {
+        if (trim($description) === '') {
+            return;
+        }
+        $comment = $sheet->getComment("E{$row}");
+        $comment->getText()->createTextRun($description);
+        $comment->setWidth('500px')->setHeight('250px');
     }
 }
