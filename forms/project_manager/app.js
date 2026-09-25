@@ -719,13 +719,19 @@ async function downloadReport(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
     !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
-  const other = scopedIssues.filter(issue => !includedKeys.has(issue.key)).map(issue => ({
-    task: issue.key,
-    created: issue.created?.slice(0, 10) || '',
-    status: [...(issue.metadata?.facts || [])].at(-1)?.text || '',
-    description: issue.metadata?.shortDescription || '',
-    jiraDescription: issue.description || ''
-  }));
+  const other = scopedIssues.filter(issue => !includedKeys.has(issue.key)).map(issue => {
+    const projectNames = state.projects
+      .filter(project => project.issueKeys.includes(issue.key))
+      .map(project => `${project.name} (${project.year})`);
+    const shortDescription = issue.metadata?.shortDescription || '';
+    return {
+      task: issue.key,
+      created: issue.created?.slice(0, 10) || '',
+      status: [...(issue.metadata?.facts || [])].at(-1)?.text || '',
+      description: [shortDescription, projectNames.length ? `Проекты: ${projectNames.join(', ')}` : ''].filter(Boolean).join('\n'),
+      jiraDescription: issue.description || ''
+    };
+  });
   const submit = reportDataModal.hidden
     ? reportForm.querySelector('[type="submit"]')
     : reportDataForm.querySelector('[type="submit"]');
