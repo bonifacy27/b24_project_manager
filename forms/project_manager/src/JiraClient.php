@@ -53,7 +53,7 @@ final class JiraClient
                 'jql' => $jql,
                 'startAt' => $startAt,
                 'maxResults' => $pageSize,
-                'fields' => 'summary,description,status,priority,reporter,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+                'fields' => 'summary,description,status,priority,reporter,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks,components,customfield_10010',
             ]);
             $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
             $issues = [...$issues, ...$page];
@@ -394,10 +394,25 @@ final class JiraClient
             'resolved' => (string) ($fields['resolutiondate'] ?? ''),
             'dueDate' => $fields['duedate'] ?? null,
             'type' => (string) ($fields['issuetype']['name'] ?? ''),
+            'components' => array_values(array_filter(array_map(
+                static fn (mixed $component): string => is_array($component) ? trim((string) ($component['name'] ?? '')) : '',
+                is_array($fields['components'] ?? null) ? $fields['components'] : []
+            ))),
+            'requestType' => $this->requestTypeToText($fields['customfield_10010'] ?? ''),
             'comments' => (int) ($fields['comment']['total'] ?? 0),
             'linkedIssues' => $this->normaliseLinks($fields['issuelinks'] ?? []),
             'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) ($issue['key'] ?? '')),
         ];
+    }
+
+    private function requestTypeToText(mixed $requestType): string
+    {
+        if (is_array($requestType)) {
+            return trim((string) ($requestType['requestType']['name'] ?? $requestType['name'] ?? $requestType['value'] ?? ''));
+        }
+
+        $value = trim((string) $requestType);
+        return str_contains($value, '/') ? (string) substr($value, strrpos($value, '/') + 1) : $value;
     }
 
     /** @return list<array<string, string>> */

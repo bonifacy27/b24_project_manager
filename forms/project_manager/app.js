@@ -666,7 +666,7 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
 });
 function reportIssues(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
-    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
   return {
     completed: scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek),
@@ -682,14 +682,19 @@ function requiresReportDetails(issue) {
   return ['medium', 'high', 'maximum'].includes(issue.metadata?.complexity);
 }
 
-function downloadReport(completedWeek, plannedWeek) {
+async function downloadReport(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
-  const issueRow = (issue, planWeek, factWeek) => [
-    issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary,
-    (issue.metadata?.tags || []).join(', '), issue.metadata?.shortDescription || issue.description || '',
-    entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
-    entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
-  ];
+  const systemName = issue => issue.project === 'ods'
+    ? (issue.components || []).join(', ')
+    : (issue.requestType || '');
+  const issueRow = (issue, planWeek, factWeek) => ({
+    task: issue.key,
+    created: issue.created?.slice(0, 10) || '',
+    system: systemName(issue),
+    description: issue.metadata?.shortDescription || '',
+    actions: entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
+    result: entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
+  });
   const reportRows = (issues, planWeek, factWeek) => {
     const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
     const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
@@ -698,29 +703,60 @@ function downloadReport(completedWeek, plannedWeek) {
       const attached = state.projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
       return attached.length ? attached : [issue.project.toUpperCase()];
     }))];
-    const tags = [...new Set(supportIssues.flatMap(issue => issue.metadata?.tags || []))];
-    detailed.push([
-      supportIssues.map(issue => issue.key).join('\n'), '',
-      [...new Set(supportIssues.map(issue => issue.project.toUpperCase()))].join(', '),
-      'Заявки по техподдержке', tags.join(', '),
-      `Техподдержка по проектам ${projects.join(', ') || '—'}, ${tags.join(', ') || 'без тегов'}`,
-      '', 'Выполнено'
-    ]);
+    detailed.push({
+      task: supportIssues.map(issue => issue.key).join(', '),
+      created: '',
+      system: [...new Set(supportIssues.map(systemName).filter(Boolean))].join(', '),
+      description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
+      actions: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text)).join('\n'),
+      result: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text)).join('\n')
+    });
     return detailed;
   };
-  const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Теги', 'Краткое описание', 'Планируемые действия', 'Итог'];
-  const rows = [
-    [`Итоги за неделю ${weekDateRange(completedWeek)}`], headers,
-    ...reportRows(completed, completedWeek, completedWeek), [],
-    [`План на неделю ${weekDateRange(plannedWeek)}`], headers,
-    ...reportRows(planned, plannedWeek, plannedWeek)
-  ];
-  const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
-  link.download = `jira-report-${completedWeek}-${plannedWeek}.csv`; link.click(); URL.revokeObjectURL(link.href);
-  closeReport(); reportDataModal.hidden = true;
-  showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+  const includedKeys = new Set([...completed, ...planned].map(issue => issue.key));
+  const scopedIssues = state.issues.filter(issue =>
+    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+  );
+  const other = scopedIssues.filter(issue => !includedKeys.has(issue.key)).map(issue => ({
+    task: issue.key,
+    created: issue.created?.slice(0, 10) || '',
+    status: [...(issue.metadata?.facts || [])].at(-1)?.text || '',
+    description: issue.metadata?.shortDescription || ''
+  }));
+  const submit = reportDataModal.hidden
+    ? reportForm.querySelector('[type="submit"]')
+    : reportDataForm.querySelector('[type="submit"]');
+  const errorBox = reportForm.querySelector('.form-error');
+  submit.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const reportUrl = new URL(apiUrl);
+    reportUrl.searchParams.set('project_manager_api', 'report');
+    const response = await fetch(reportUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessid: reportForm.elements.sessid.value,
+        completedRange: weekDateRange(completedWeek), plannedRange: weekDateRange(plannedWeek),
+        completed: reportRows(completed, completedWeek, completedWeek),
+        planned: reportRows(planned, plannedWeek, plannedWeek), other
+      })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Ошибка выгрузки (${response.status})`);
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = `jira-report-${completedWeek}-${plannedWeek}.xlsx`;
+    link.click(); URL.revokeObjectURL(link.href);
+    closeReport(); reportDataModal.hidden = true;
+    showToast('Excel-отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+  } catch (error) {
+    errorBox.textContent = error.message; errorBox.hidden = false;
+    reportModal.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 function openReportDataCheck(completedWeek, plannedWeek) {
