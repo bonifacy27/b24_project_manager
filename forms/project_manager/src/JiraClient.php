@@ -220,12 +220,70 @@ final class JiraClient
             throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
         }
 
-        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, [
+        $payload = [
             'transition' => ['id' => $transitionId],
             'update' => ['comment' => [['add' => ['body' => $comment]]]],
-        ]);
+        ];
+        $completionFields = $this->completionFields($transition);
+        if ($completionFields !== []) {
+            $payload['fields'] = $completionFields;
+        }
+
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, $payload);
 
         return ['key' => $issueKey, 'status' => (string) ($transition['to']['name'] ?? 'Выполнено')];
+    }
+
+    /**
+     * Jira workflows can expose a resolution selector on a completion
+     * transition. Sending no value makes some Jira Server versions apply the
+     * global default resolution, even when that resolution is not permitted
+     * by the transition. Always send one of the values advertised by this
+     * particular transition instead.
+     *
+     * @param array<string, mixed> $transition
+     * @return array<string, array{id: string}>
+     */
+    private function completionFields(array $transition): array
+    {
+        $fields = is_array($transition['fields'] ?? null) ? $transition['fields'] : [];
+        $resolution = is_array($fields['resolution'] ?? null) ? $fields['resolution'] : null;
+        if ($resolution === null) {
+            return [];
+        }
+
+        $allowedValues = array_values(array_filter(
+            is_array($resolution['allowedValues'] ?? null) ? $resolution['allowedValues'] : [],
+            static fn (mixed $value): bool => is_array($value) && (string) ($value['id'] ?? '') !== ''
+        ));
+        if ($allowedValues === []) {
+            if (!empty($resolution['required'])) {
+                throw new RuntimeException('Переход Jira требует резолюцию, но не предлагает доступных значений.');
+            }
+
+            return [];
+        }
+
+        $defaultId = (string) ($resolution['defaultValue']['id'] ?? '');
+        $selected = null;
+        foreach ($allowedValues as $value) {
+            if ($defaultId !== '' && (string) $value['id'] === $defaultId) {
+                $selected = $value;
+                break;
+            }
+        }
+        if ($selected === null) {
+            foreach ($allowedValues as $value) {
+                $name = mb_strtolower(trim((string) ($value['name'] ?? '')));
+                if (preg_match('/fixed|done|resolved|выполн|готов|решен|исправ/iu', $name)) {
+                    $selected = $value;
+                    break;
+                }
+            }
+        }
+        $selected ??= $allowedValues[0];
+
+        return ['resolution' => ['id' => (string) $selected['id']]];
     }
 
     /** @return array<string, mixed> */
