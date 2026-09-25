@@ -783,11 +783,12 @@ function openReportDataCheck(completedWeek, plannedWeek) {
       <strong>Планируемые действия</strong><strong>Итог</strong>
     </div>` + [...missing.values()].map(row => {
     const description = row.issue.metadata?.shortDescription || '';
+    const jiraDescription = row.issue.description || 'Описание в Jira не заполнено';
     const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
     const existingFact = entriesForWeek(row.issue.metadata?.facts, completedWeek).map(entry => entry.text).join('\n');
     return `
     <div class="report-data-row" data-key="${escapeHtml(row.issue.key)}">
-      <strong>${escapeHtml(row.issue.key)}</strong>
+      <strong class="report-issue-tooltip" tabindex="0">${escapeHtml(row.issue.key)}<span role="tooltip"><b>${escapeHtml(row.issue.summary || 'Без названия')}</b><small>${escapeHtml(jiraDescription)}</small></span></strong>
       <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
       <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
       ${row.description ? `<label><span class="sr-only">Краткое описание</span><textarea aria-label="Краткое описание" class="quick-description" maxlength="5000"></textarea></label>` : `<span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>`}
