@@ -207,12 +207,23 @@ final class JiraClient
         $response = $this->request('GET', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query + ['expand' => 'transitions.fields']);
         $transitions = is_array($response['transitions'] ?? null) ? $response['transitions'] : [];
         $transition = null;
+        $transitionScore = -1;
         foreach ($transitions as $candidate) {
             $targetName = (string) ($candidate['to']['name'] ?? '');
             $category = (string) ($candidate['to']['statusCategory']['key'] ?? '');
             if ($category === 'done' || preg_match('/выполн|закры|решен/iu', $targetName)) {
-                $transition = $candidate;
-                break;
+                $normalisedTarget = mb_strtolower(trim($targetName));
+                $candidateScore = match (true) {
+                    $normalisedTarget === 'выполнено' => 300,
+                    (bool) preg_match('/выполн/iu', $normalisedTarget) => 250,
+                    in_array($normalisedTarget, ['done', 'completed'], true) => 200,
+                    (bool) preg_match('/решен|resolved/iu', $normalisedTarget) => 150,
+                    default => 100,
+                };
+                if ($candidateScore > $transitionScore) {
+                    $transition = $candidate;
+                    $transitionScore = $candidateScore;
+                }
             }
         }
         $transitionId = (string) ($transition['id'] ?? '');
@@ -220,12 +231,72 @@ final class JiraClient
             throw new RuntimeException('Для заявки Jira не найден доступный переход в выполненный статус.');
         }
 
-        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, [
+        $payload = [
             'transition' => ['id' => $transitionId],
             'update' => ['comment' => [['add' => ['body' => $comment]]]],
-        ]);
+        ];
+        $completionFields = $this->completionFields($transition);
+        if ($completionFields !== []) {
+            $payload['fields'] = $completionFields;
+        }
+
+        $this->request('POST', '/rest/api/2/issue/' . rawurlencode($issueKey) . '/transitions', $query, $payload);
 
         return ['key' => $issueKey, 'status' => (string) ($transition['to']['name'] ?? 'Выполнено')];
+    }
+
+    /**
+     * Jira workflows can expose a resolution selector on a completion
+     * transition. Sending no value makes some Jira Server versions apply the
+     * global default resolution, even when that resolution represents a
+     * cancellation. Always select an explicitly successful resolution from
+     * the values advertised by this particular transition instead.
+     *
+     * @param array<string, mixed> $transition
+     * @return array<string, array{id: string}>
+     */
+    private function completionFields(array $transition): array
+    {
+        $fields = is_array($transition['fields'] ?? null) ? $transition['fields'] : [];
+        $resolution = is_array($fields['resolution'] ?? null) ? $fields['resolution'] : null;
+        if ($resolution === null) {
+            return [];
+        }
+
+        $allowedValues = array_values(array_filter(
+            is_array($resolution['allowedValues'] ?? null) ? $resolution['allowedValues'] : [],
+            static fn (mixed $value): bool => is_array($value) && (string) ($value['id'] ?? '') !== ''
+        ));
+        if ($allowedValues === []) {
+            if (!empty($resolution['required'])) {
+                throw new RuntimeException('Переход Jira требует резолюцию, но не предлагает доступных значений.');
+            }
+
+            return [];
+        }
+
+        $selected = null;
+        foreach ($allowedValues as $value) {
+            $name = mb_strtolower(trim((string) ($value['name'] ?? '')));
+            if (in_array($name, ['выполнен', 'выполнено', 'done', 'completed'], true)) {
+                $selected = $value;
+                break;
+            }
+        }
+        if ($selected === null) {
+            foreach ($allowedValues as $value) {
+                $name = mb_strtolower(trim((string) ($value['name'] ?? '')));
+                if (preg_match('/fixed|resolved|выполн|готов|решен|исправ/iu', $name)) {
+                    $selected = $value;
+                    break;
+                }
+            }
+        }
+        if ($selected === null) {
+            throw new RuntimeException('Переход Jira не предлагает резолюцию «Выполнен».');
+        }
+
+        return ['resolution' => ['id' => (string) $selected['id']]];
     }
 
     /** @return array<string, mixed> */
