@@ -682,6 +682,7 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
 });
 function updateReportType() {
   const monthly = reportForm.elements.reportType.value === 'monthly';
+  reportModal.querySelector('.report-modal').classList.toggle('monthly-mode', monthly);
   reportForm.querySelector('.weekly-report-fields').hidden = monthly;
   reportForm.querySelector('.monthly-report-fields').hidden = !monthly;
   reportForm.elements.completedWeek.required = !monthly;
@@ -714,8 +715,8 @@ async function renderMonthlyReport(month) {
       const project = projectNames.join(', ') || issue.project.toUpperCase();
       const description = issue.metadata?.shortDescription || issue.summary || 'Без описания';
       const fact = (issue.metadata?.facts || []).map(entry => entry.text).filter(Boolean).join('\n') || 'Факт не заполнен';
-      const tooltip = `Описание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
-      return `<div class="monthly-report-line" tabindex="0" title="${escapeHtml(tooltip)}"><a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issue.key)}</a> ${escapeHtml(description)} ${escapeHtml(project)}<span class="report-tooltip" role="tooltip">${escapeHtml(tooltip)}</span></div>`;
+      const tooltip = `Проект:\n${project}\n\nОписание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
+      return `<div class="monthly-report-line" tabindex="0" title="${escapeHtml(tooltip)}"><a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issue.key)}</a> ${escapeHtml(description)}<span class="report-tooltip" role="tooltip">${escapeHtml(tooltip)}</span></div>`;
     }).join('') : '<div class="monthly-report-empty">За выбранный месяц подходящих заявок нет.</div>';
     result.hidden = false;
     showToast('Месячный отчёт сформирован', `Заявок: ${issues.length}`);
