@@ -41,7 +41,7 @@ require_once dirname(__DIR__) . '/src/JiraClient.php';
 require_once dirname(__DIR__) . '/src/IssueMetadataStore.php';
 
 $project = strtolower((string) ($_GET['project'] ?? 'all'));
-if (!in_array($project, ['all', 'ods', 'ssis'], true)) {
+if (!in_array($project, ['all', 'ods', 'ssis', 'ditsd'], true)) {
     http_response_code(422);
     echo json_encode(['error' => 'Неизвестный проект.'], JSON_UNESCAPED_UNICODE);
     exit;
@@ -162,6 +162,9 @@ try {
             default => null,
         };
         $settings = $config['jira']['projects'][$project];
+        if (!empty($settings['read_only'])) {
+            throw new InvalidArgumentException('Создание заявок для этого проекта не поддерживается.');
+        }
         $requiredFields = $settings['required_create_fields'] ?? [];
         if ((in_array('component', $requiredFields, true) && $componentId === '')
             || (in_array('fixVersion', $requiredFields, true) && $fixVersionId === '')) {
@@ -197,7 +200,7 @@ try {
         echo json_encode(['issue' => $issue], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         exit;
     }
-    $projects = $project === 'all' ? ['ods', 'ssis'] : [$project];
+    $projects = $project === 'all' ? ['ods', 'ssis', 'ditsd'] : [$project];
     $issues = [];
     $totals = [];
     $creationOptions = [];

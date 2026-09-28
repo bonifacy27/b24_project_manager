@@ -3,6 +3,7 @@ const metadataModal = document.querySelector('#metadataModal');
 const reportModal = document.querySelector('#reportModal');
 const reportDataModal = document.querySelector('#reportDataModal');
 const projectModal = document.querySelector('#projectModal');
+const guideModal = document.querySelector('#guideModal');
 const toast = document.querySelector('#toast');
 const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
@@ -255,12 +256,20 @@ function visibleIssues() {
   return state.issues.filter(issue => {
     if (issue.projectOnly) return false;
     const matchesProject = state.project === 'all' || issue.project === state.project;
-    const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
+    const searchFields = [
+      issue.key,
+      issue.summary,
+      issue.metadata?.shortDescription,
+      ...(issue.metadata?.plannedActions || []).map(entry => entry.text),
+      ...(issue.metadata?.facts || []).map(entry => entry.text)
+    ].map(value => String(value || '').toLowerCase().replaceAll('ё', 'е').replace(/\s+/g, ' ').trim());
+    const query = state.query.replaceAll('ё', 'е').replace(/\s+/g, ' ').trim();
     const matchesSummary = state.summaryFilter === 'all'
       || (state.summaryFilter === 'week' && targetColumn(issue) === 'week')
       || (state.summaryFilter === 'waiting' && /уточнение информации|waiting|pending|ожидает/i.test(issue.status || ''))
       || (state.summaryFilter === 'updated' && issue.updated?.slice(0, 10) === today);
-    return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary && haystack.includes(state.query);
+    return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary
+      && (!query || searchFields.some(value => value.includes(query)));
   });
 }
 
@@ -308,7 +317,7 @@ function findIssue(key) {
 }
 
 function updateSummary(totals = {}) {
-  ['ods', 'ssis'].forEach(project => {
+  ['ods', 'ssis', 'ditsd'].forEach(project => {
     document.querySelector(`[data-project="${project}"] b`).textContent = totals[project] ?? state.issues.filter(i => i.project === project).length;
   });
   const total = Object.values(totals).reduce((sum, value) => sum + Number(value), 0) || state.issues.length;
@@ -472,10 +481,14 @@ projectForm.querySelector('.project-issue-options').addEventListener('change', e
   renderProjectIssues(projectForm.querySelector('.project-issue-search input').value);
 });
 function closeReport() { reportModal.hidden = true; }
+function closeGuide() { guideModal.hidden = true; }
+document.querySelector('#helpBtn').addEventListener('click', () => { guideModal.hidden = false; guideModal.querySelector('.modal-close').focus(); });
+guideModal.querySelector('.modal-close').addEventListener('click', closeGuide);
+guideModal.addEventListener('click', event => { if (event.target === guideModal) closeGuide(); });
 reportModal.querySelector('.modal-close').addEventListener('click', closeReport);
 reportModal.querySelector('.cancel').addEventListener('click', closeReport);
 reportModal.addEventListener('click', event => { if (event.target === reportModal) closeReport(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); reportDataModal.hidden = true; } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); closeGuide(); reportDataModal.hidden = true; } });
 metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
@@ -666,7 +679,7 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
 });
 function reportIssues(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
-    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
   return {
     completed: scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek),
@@ -682,14 +695,20 @@ function requiresReportDetails(issue) {
   return ['medium', 'high', 'maximum'].includes(issue.metadata?.complexity);
 }
 
-function downloadReport(completedWeek, plannedWeek) {
+async function downloadReport(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
-  const issueRow = (issue, planWeek, factWeek) => [
-    issue.key, issue.created?.slice(0, 10) || '', issue.project.toUpperCase(), issue.summary,
-    (issue.metadata?.tags || []).join(', '), issue.metadata?.shortDescription || issue.description || '',
-    entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
-    entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
-  ];
+  const systemName = issue => issue.project === 'ods'
+    ? (issue.components || []).join(', ')
+    : (issue.requestType || '');
+  const issueRow = (issue, planWeek, factWeek) => ({
+    task: issue.key,
+    created: issue.created?.slice(0, 10) || '',
+    system: systemName(issue),
+    description: issue.metadata?.shortDescription || '',
+    jiraDescription: issue.description || '',
+    actions: entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
+    result: entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
+  });
   const reportRows = (issues, planWeek, factWeek) => {
     const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
     const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
@@ -698,40 +717,81 @@ function downloadReport(completedWeek, plannedWeek) {
       const attached = state.projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
       return attached.length ? attached : [issue.project.toUpperCase()];
     }))];
-    const tags = [...new Set(supportIssues.flatMap(issue => issue.metadata?.tags || []))];
-    detailed.push([
-      supportIssues.map(issue => issue.key).join('\n'), '',
-      [...new Set(supportIssues.map(issue => issue.project.toUpperCase()))].join(', '),
-      'Заявки по техподдержке', tags.join(', '),
-      `Техподдержка по проектам ${projects.join(', ') || '—'}, ${tags.join(', ') || 'без тегов'}`,
-      '', 'Выполнено'
-    ]);
+    detailed.push({
+      task: supportIssues.map(issue => issue.key).join(', '),
+      created: '',
+      system: [...new Set(supportIssues.map(systemName).filter(Boolean))].join(', '),
+      description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
+      jiraDescription: supportIssues.map(issue => `${issue.key}: ${issue.description || '—'}`).join('\n\n'),
+      actions: 'Техподдержка',
+      result: 'Выполнено'
+    });
     return detailed;
   };
-  const headers = ['Задача', 'Дата создания', 'ИС', 'Название', 'Теги', 'Краткое описание', 'Планируемые действия', 'Итог'];
-  const rows = [
-    [`Итоги за неделю ${weekDateRange(completedWeek)}`], headers,
-    ...reportRows(completed, completedWeek, completedWeek), [],
-    [`План на неделю ${weekDateRange(plannedWeek)}`], headers,
-    ...reportRows(planned, plannedWeek, plannedWeek)
-  ];
-  const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n');
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
-  link.download = `jira-report-${completedWeek}-${plannedWeek}.csv`; link.click(); URL.revokeObjectURL(link.href);
-  closeReport(); reportDataModal.hidden = true;
-  showToast('Отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+  const includedKeys = new Set([...completed, ...planned].map(issue => issue.key));
+  const scopedIssues = state.issues.filter(issue =>
+    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+  );
+  const other = scopedIssues.filter(issue => !includedKeys.has(issue.key)).map(issue => {
+    const projectNames = state.projects
+      .filter(project => project.issueKeys.includes(issue.key))
+      .map(project => `${project.name} (${project.year})`);
+    const shortDescription = issue.metadata?.shortDescription || '';
+    return {
+      task: issue.key,
+      created: issue.created?.slice(0, 10) || '',
+      status: [...(issue.metadata?.facts || [])].at(-1)?.text || '',
+      description: [shortDescription, projectNames.length ? `Проекты: ${projectNames.join(', ')}` : ''].filter(Boolean).join('\n'),
+      jiraDescription: issue.description || ''
+    };
+  });
+  const submit = reportDataModal.hidden
+    ? reportForm.querySelector('[type="submit"]')
+    : reportDataForm.querySelector('[type="submit"]');
+  const errorBox = reportForm.querySelector('.form-error');
+  submit.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const reportUrl = new URL(apiUrl);
+    reportUrl.searchParams.set('project_manager_api', 'report');
+    const response = await fetch(reportUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessid: reportForm.elements.sessid.value,
+        completedRange: weekDateRange(completedWeek), plannedRange: weekDateRange(plannedWeek),
+        completed: reportRows(completed, completedWeek, completedWeek),
+        planned: reportRows(planned, plannedWeek, plannedWeek), other
+      })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Ошибка выгрузки (${response.status})`);
+    }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(await response.blob());
+    link.download = `jira-report-${completedWeek}-${plannedWeek}.xlsx`;
+    link.click(); URL.revokeObjectURL(link.href);
+    closeReport(); reportDataModal.hidden = true;
+    showToast('Excel-отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
+  } catch (error) {
+    errorBox.textContent = error.message; errorBox.hidden = false;
+    reportModal.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 function openReportDataCheck(completedWeek, plannedWeek) {
   const { completed, planned } = reportIssues(completedWeek, plannedWeek);
   const missing = new Map();
   completed.filter(requiresReportDetails).forEach(issue => {
-    if (!entriesForWeek(issue.metadata?.facts, completedWeek).length) missing.set(issue.key, { issue, fact: true, plan: false });
+    const fact = !entriesForWeek(issue.metadata?.facts, completedWeek).length;
+    const description = !issue.metadata?.shortDescription?.trim();
+    if (fact || description) missing.set(issue.key, { issue, fact, plan: false, description });
   });
   planned.filter(requiresReportDetails).forEach(issue => {
     if (!entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length) {
-      const row = missing.get(issue.key) || { issue, fact: false, plan: false };
+      const row = missing.get(issue.key) || { issue, fact: false, plan: false, description: false };
       row.plan = true; missing.set(issue.key, row);
     }
   });
@@ -741,15 +801,16 @@ function openReportDataCheck(completedWeek, plannedWeek) {
       <strong>Задача</strong><strong>Дата</strong><strong>Название</strong><strong>Краткое описание</strong>
       <strong>Планируемые действия</strong><strong>Итог</strong>
     </div>` + [...missing.values()].map(row => {
-    const description = row.issue.metadata?.shortDescription || row.issue.description || '—';
+    const description = row.issue.metadata?.shortDescription || '';
+    const jiraDescription = row.issue.description || 'Описание в Jira не заполнено';
     const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
     const existingFact = entriesForWeek(row.issue.metadata?.facts, completedWeek).map(entry => entry.text).join('\n');
     return `
     <div class="report-data-row" data-key="${escapeHtml(row.issue.key)}">
-      <strong>${escapeHtml(row.issue.key)}</strong>
+      <strong class="report-issue-tooltip" tabindex="0">${escapeHtml(row.issue.key)}<span role="tooltip"><b>${escapeHtml(row.issue.summary || 'Без названия')}</b><small>${escapeHtml(jiraDescription)}</small></span></strong>
       <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
       <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
-      <span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>
+      ${row.description ? `<label><span class="sr-only">Краткое описание</span><textarea aria-label="Краткое описание" class="quick-description" maxlength="5000"></textarea></label>` : `<span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>`}
       ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
       ${row.fact ? `<label><span class="sr-only">Факт (${escapeHtml(completedWeek)})</span><textarea aria-label="Факт ${escapeHtml(completedWeek)}" class="quick-fact" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingFact || '—')}</span>`}
     </div>`;
@@ -776,9 +837,11 @@ reportDataForm.addEventListener('submit', async event => {
       const issue = findIssue(row.dataset.key);
       const plan = row.querySelector('.quick-plan')?.value.trim() || '';
       const fact = row.querySelector('.quick-fact')?.value.trim() || '';
-      if (!plan && !fact) continue;
+      const shortDescription = row.querySelector('.quick-description')?.value.trim() || '';
+      if (!plan && !fact && !shortDescription) continue;
       await saveMetadata({
         issueKey: issue.key, bucket: targetColumn(issue), sessid: metadataForm.elements.sessid.value,
+        ...(shortDescription ? { shortDescription } : {}),
         plannedAction: plan, plannedActionWeek: state.pendingReport.plannedWeek,
         fact, factWeek: state.pendingReport.completedWeek
       });

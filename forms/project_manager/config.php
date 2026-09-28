@@ -78,6 +78,7 @@ return [
         'jql' => [
             'ods' => 'project = ODS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
             'ssis' => 'project = SSIS AND assignee = %s AND (resolution = Unresolved OR (resolved >= -3w AND resolved <= 1w)) ORDER BY updated DESC',
+            'ditsd' => 'project = DITSD AND assignee = %s AND resolution = Unresolved ORDER BY updated DESC',
         ],
         'projects' => [
             'ods' => [
@@ -87,6 +88,7 @@ return [
                 'use_current_user' => true,
             ],
             'ssis' => ['key' => 'SSIS', 'issue_type' => 'Задача'],
+            'ditsd' => ['key' => 'DITSD', 'issue_type' => 'Задача', 'read_only' => true],
         ],
     ],
 ];
