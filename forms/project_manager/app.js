@@ -710,8 +710,8 @@ async function downloadReport(completedWeek, plannedWeek) {
       system: [...new Set(supportIssues.map(systemName).filter(Boolean))].join(', '),
       description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
       jiraDescription: supportIssues.map(issue => `${issue.key}: ${issue.description || '—'}`).join('\n\n'),
-      actions: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text)).join('\n'),
-      result: supportIssues.flatMap(issue => entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text)).join('\n')
+      actions: 'Техподдержка',
+      result: 'Выполнено'
     });
     return detailed;
   };
