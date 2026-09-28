@@ -255,12 +255,20 @@ function visibleIssues() {
   return state.issues.filter(issue => {
     if (issue.projectOnly) return false;
     const matchesProject = state.project === 'all' || issue.project === state.project;
-    const haystack = `${issue.key} ${issue.summary} ${issue.description || ''} ${issue.status} ${issue.assignee?.name || ''} ${issue.metadata?.shortDescription || ''} ${(issue.metadata?.tags || []).join(' ')} ${complexityLabels[issue.metadata?.complexity] || ''}`.toLowerCase();
+    const searchFields = [
+      issue.key,
+      issue.summary,
+      issue.metadata?.shortDescription,
+      ...(issue.metadata?.plannedActions || []).map(entry => entry.text),
+      ...(issue.metadata?.facts || []).map(entry => entry.text)
+    ].map(value => String(value || '').toLowerCase().replaceAll('ё', 'е').replace(/\s+/g, ' ').trim());
+    const query = state.query.replaceAll('ё', 'е').replace(/\s+/g, ' ').trim();
     const matchesSummary = state.summaryFilter === 'all'
       || (state.summaryFilter === 'week' && targetColumn(issue) === 'week')
       || (state.summaryFilter === 'waiting' && /уточнение информации|waiting|pending|ожидает/i.test(issue.status || ''))
       || (state.summaryFilter === 'updated' && issue.updated?.slice(0, 10) === today);
-    return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary && haystack.includes(state.query);
+    return matchesProject && matchesStatus(issue) && matchesTags(issue) && matchesSummary
+      && (!query || searchFields.some(value => value.includes(query)));
   });
 }
 
