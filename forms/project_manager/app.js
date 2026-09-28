@@ -3,6 +3,7 @@ const metadataModal = document.querySelector('#metadataModal');
 const reportModal = document.querySelector('#reportModal');
 const reportDataModal = document.querySelector('#reportDataModal');
 const projectModal = document.querySelector('#projectModal');
+const guideModal = document.querySelector('#guideModal');
 const toast = document.querySelector('#toast');
 const board = document.querySelector('#kanban');
 const form = document.querySelector('#issueForm');
@@ -480,10 +481,14 @@ projectForm.querySelector('.project-issue-options').addEventListener('change', e
   renderProjectIssues(projectForm.querySelector('.project-issue-search input').value);
 });
 function closeReport() { reportModal.hidden = true; }
+function closeGuide() { guideModal.hidden = true; }
+document.querySelector('#helpBtn').addEventListener('click', () => { guideModal.hidden = false; guideModal.querySelector('.modal-close').focus(); });
+guideModal.querySelector('.modal-close').addEventListener('click', closeGuide);
+guideModal.addEventListener('click', event => { if (event.target === guideModal) closeGuide(); });
 reportModal.querySelector('.modal-close').addEventListener('click', closeReport);
 reportModal.querySelector('.cancel').addEventListener('click', closeReport);
 reportModal.addEventListener('click', event => { if (event.target === reportModal) closeReport(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); reportDataModal.hidden = true; } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeMetadata(); closeProjectModal(); closeReport(); closeGuide(); reportDataModal.hidden = true; } });
 metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
