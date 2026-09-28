@@ -676,6 +676,7 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
   const previous = new Date(); previous.setDate(previous.getDate() - 7);
   reportForm.elements.completedWeek.value = isoWeekValue(previous);
   reportForm.elements.plannedWeek.value = isoWeekValue(current);
+  reportForm.elements.reportMonth.value = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
   reportForm.elements.reportType.value = 'weekly';
   updateReportType();
   reportModal.hidden = false;
@@ -684,8 +685,10 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
 function updateReportType() {
   const monthly = reportForm.elements.reportType.value === 'monthly';
   reportForm.querySelector('.weekly-report-fields').hidden = monthly;
+  reportForm.querySelector('.monthly-report-fields').hidden = !monthly;
   reportForm.elements.completedWeek.required = !monthly;
   reportForm.elements.plannedWeek.required = !monthly;
+  reportForm.elements.reportMonth.required = monthly;
   reportForm.querySelector('[type="submit"]').textContent = monthly ? 'Открыть отчёт' : 'Скачать Excel';
   reportModal.querySelector('.report-help').textContent = monthly
     ? 'Ежемесячный отчёт откроется на отдельной странице.'
@@ -694,8 +697,7 @@ function updateReportType() {
 reportForm.elements.reportType.addEventListener('change', updateReportType);
 
 function openMonthlyReportPage() {
-  const current = new Date();
-  document.querySelector('#monthlyReportMonth').value = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+  document.querySelector('#monthlyReportMonth').value = reportForm.elements.reportMonth.value;
   closeReport();
   workspacePage.hidden = true;
   monthlyReportPage.hidden = false;
@@ -728,14 +730,14 @@ async function renderMonthlyReport(month) {
     const projects = payload.localProjects || state.projects;
     const rows = issues.map(issue => {
       const projectNames = projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
-      const project = projectNames.join(', ') || issue.project.toUpperCase();
+      const project = projectNames.join(', ');
       const description = issue.metadata?.shortDescription || issue.summary || 'Без описания';
       const fact = (issue.metadata?.facts || []).map(entry => entry.text).filter(Boolean).join('\n') || 'Факт не заполнен';
-      const tooltip = `Проект:\n${project}\n\nОписание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
+      const tooltip = `Описание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
       return { issue, project, description, tooltip };
     });
-    result.innerHTML = rows.length ? rows.map(row => `<div class="monthly-report-line" tabindex="0" title="${escapeHtml(row.tooltip)}"><a href="${escapeHtml(row.issue.url)}" target="_blank" rel="noopener">${escapeHtml(row.issue.key)}</a><span>${escapeHtml(row.description)}</span><span>${escapeHtml(row.project)}</span><span class="report-tooltip" role="tooltip">${escapeHtml(row.tooltip)}</span></div>`).join('') : '<div class="monthly-report-empty">За выбранный месяц подходящих заявок нет.</div>';
-    monthlyReportPage.dataset.copyText = rows.map(row => `${row.issue.key} ${row.description} ${row.project}`).join('\n');
+    result.innerHTML = rows.length ? rows.map(row => `<div class="monthly-report-line"><a class="monthly-report-key" href="${escapeHtml(row.issue.url)}" target="_blank" rel="noopener" title="${escapeHtml(row.tooltip)}">${escapeHtml(row.issue.key)}<span class="report-tooltip" role="tooltip">${escapeHtml(row.tooltip)}</span></a><span>${escapeHtml(row.description)}</span><span>${row.project ? `(${escapeHtml(row.project)})` : ''}</span></div>`).join('') : '<div class="monthly-report-empty">За выбранный месяц подходящих заявок нет.</div>';
+    monthlyReportPage.dataset.copyText = rows.map(row => `${row.issue.key} ${row.description}${row.project ? ` (${row.project})` : ''}`).join('\n');
     copy.disabled = rows.length === 0;
     showToast('Месячный отчёт сформирован', `Заявок: ${issues.length}`);
   } catch (error) {
