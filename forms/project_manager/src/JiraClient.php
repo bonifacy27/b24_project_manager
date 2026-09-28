@@ -11,6 +11,7 @@ final class JiraClient
 {
     /** @var array<string, mixed> */
     private array $diagnostics = [];
+    private ?string $requestTypeFieldId = null;
 
     public function __construct(private readonly array $config)
     {
@@ -47,13 +48,18 @@ final class JiraClient
         $startAt = 0;
         $total = 0;
         $issues = [];
+        $requestTypeFieldId = $this->getRequestTypeFieldId();
+        $requestedFields = 'summary,description,status,priority,reporter,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks,components';
+        if ($requestTypeFieldId !== '') {
+            $requestedFields .= ',' . $requestTypeFieldId;
+        }
 
         do {
             $response = $this->request('GET', '/rest/api/2/search', [
                 'jql' => $jql,
                 'startAt' => $startAt,
                 'maxResults' => $pageSize,
-                'fields' => 'summary,description,status,priority,reporter,assignee,created,updated,resolutiondate,duedate,issuetype,project,comment,issuelinks',
+                'fields' => $requestedFields,
             ]);
             $page = is_array($response['issues'] ?? null) ? $response['issues'] : [];
             $issues = [...$issues, ...$page];
@@ -62,7 +68,7 @@ final class JiraClient
         } while ($page !== [] && $startAt < $total);
 
         return [
-            'issues' => array_map(fn (array $issue): array => $this->normaliseIssue($issue), $issues),
+            'issues' => array_map(fn (array $issue): array => $this->normaliseIssue($issue, $requestTypeFieldId), $issues),
             'total' => $total,
         ];
     }
@@ -367,7 +373,7 @@ final class JiraClient
     }
 
     /** @return array<string, mixed> */
-    private function normaliseIssue(array $issue): array
+    private function normaliseIssue(array $issue, string $requestTypeFieldId = ''): array
     {
         $fields = $issue['fields'] ?? [];
         $assignee = $fields['assignee'] ?? null;
@@ -394,10 +400,53 @@ final class JiraClient
             'resolved' => (string) ($fields['resolutiondate'] ?? ''),
             'dueDate' => $fields['duedate'] ?? null,
             'type' => (string) ($fields['issuetype']['name'] ?? ''),
+            'components' => array_values(array_filter(array_map(
+                static fn (mixed $component): string => is_array($component) ? trim((string) ($component['name'] ?? '')) : '',
+                is_array($fields['components'] ?? null) ? $fields['components'] : []
+            ))),
+            'requestType' => $this->requestTypeToText($requestTypeFieldId !== '' ? ($fields[$requestTypeFieldId] ?? '') : ''),
             'comments' => (int) ($fields['comment']['total'] ?? 0),
             'linkedIssues' => $this->normaliseLinks($fields['issuelinks'] ?? []),
             'url' => $this->config['base_url'] . '/browse/' . rawurlencode((string) ($issue['key'] ?? '')),
         ];
+    }
+
+    private function requestTypeToText(mixed $requestType): string
+    {
+        if (is_array($requestType)) {
+            return trim((string) (
+                $requestType['requestTypeName']
+                ?? $requestType['requestType']['name']
+                ?? $requestType['name']
+                ?? $requestType['value']
+                ?? ''
+            ));
+        }
+
+        $value = trim((string) $requestType);
+        return str_contains($value, '/') ? (string) substr($value, strrpos($value, '/') + 1) : $value;
+    }
+
+    private function getRequestTypeFieldId(): string
+    {
+        if ($this->requestTypeFieldId !== null) {
+            return $this->requestTypeFieldId;
+        }
+        $this->requestTypeFieldId = '';
+        $fields = $this->request('GET', '/rest/api/2/field');
+        foreach ($fields as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $name = mb_strtolower(trim((string) ($field['name'] ?? '')));
+            $isRequestType = str_contains($name, 'тип запроса')
+                || (str_contains($name, 'request') && str_contains($name, 'type') && str_contains($name, 'customer'));
+            if ($isRequestType) {
+                $this->requestTypeFieldId = trim((string) ($field['id'] ?? ''));
+                break;
+            }
+        }
+        return $this->requestTypeFieldId;
     }
 
     /** @return list<array<string, string>> */
