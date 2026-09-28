@@ -11,6 +11,8 @@ const metadataForm = document.querySelector('#metadataForm');
 const reportForm = document.querySelector('#reportForm');
 const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
+const monthlyReportPage = document.querySelector('#monthlyReportPage');
+const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
 const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
@@ -674,8 +676,91 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
   const previous = new Date(); previous.setDate(previous.getDate() - 7);
   reportForm.elements.completedWeek.value = isoWeekValue(previous);
   reportForm.elements.plannedWeek.value = isoWeekValue(current);
+  reportForm.elements.reportMonth.value = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+  reportForm.elements.reportType.value = 'weekly';
+  updateReportType();
   reportModal.hidden = false;
   reportForm.elements.completedWeek.focus();
+});
+function updateReportType() {
+  const monthly = reportForm.elements.reportType.value === 'monthly';
+  reportForm.querySelector('.weekly-report-fields').hidden = monthly;
+  reportForm.querySelector('.monthly-report-fields').hidden = !monthly;
+  reportForm.elements.completedWeek.required = !monthly;
+  reportForm.elements.plannedWeek.required = !monthly;
+  reportForm.elements.reportMonth.required = monthly;
+  reportForm.querySelector('[type="submit"]').textContent = monthly ? 'Открыть отчёт' : 'Скачать Excel';
+  reportModal.querySelector('.report-help').textContent = monthly
+    ? 'Ежемесячный отчёт откроется на отдельной странице.'
+    : 'Выберите отдельно неделю итогов и неделю планирования.';
+}
+reportForm.elements.reportType.addEventListener('change', updateReportType);
+
+function openMonthlyReportPage() {
+  document.querySelector('#monthlyReportMonth').value = reportForm.elements.reportMonth.value;
+  closeReport();
+  workspacePage.hidden = true;
+  monthlyReportPage.hidden = false;
+  document.querySelector('#monthlyReportMonth').focus();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeMonthlyReportPage() {
+  monthlyReportPage.hidden = true;
+  workspacePage.hidden = false;
+  document.querySelector('#reportBtn').focus();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function renderMonthlyReport(month) {
+  const submit = document.querySelector('#monthlyReportBuild');
+  const copy = document.querySelector('#monthlyReportCopy');
+  const errorBox = monthlyReportPage.querySelector('.monthly-report-error');
+  const result = monthlyReportPage.querySelector('.monthly-report-page-result');
+  submit.disabled = true; errorBox.hidden = true;
+  try {
+    const url = new URL(apiUrl);
+    url.searchParams.set('report_month', month);
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Ошибка загрузки (${response.status})`);
+    const issues = (payload.issues || []).filter(issue =>
+      requiresReportDetails(issue) && (state.project === 'all' || issue.project === state.project)
+    );
+    const projects = payload.localProjects || state.projects;
+    const rows = issues.map(issue => {
+      const projectNames = projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
+      const project = projectNames.join(', ');
+      const description = issue.metadata?.shortDescription || issue.summary || 'Без описания';
+      const fact = (issue.metadata?.facts || []).map(entry => entry.text).filter(Boolean).join('\n') || 'Факт не заполнен';
+      const tooltip = `Описание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
+      return { issue, project, description, tooltip };
+    });
+    result.innerHTML = rows.length ? rows.map(row => `<div class="monthly-report-line"><a class="monthly-report-key" href="${escapeHtml(row.issue.url)}" target="_blank" rel="noopener" title="${escapeHtml(row.tooltip)}">${escapeHtml(row.issue.key)}<span class="report-tooltip" role="tooltip">${escapeHtml(row.tooltip)}</span></a><span>${escapeHtml(row.description)}</span><span>${row.project ? `(${escapeHtml(row.project)})` : ''}</span></div>`).join('') : '<div class="monthly-report-empty">За выбранный месяц подходящих заявок нет.</div>';
+    monthlyReportPage.dataset.copyText = rows.map(row => `${row.issue.key} ${row.description}${row.project ? ` (${row.project})` : ''}`).join('\n');
+    copy.disabled = rows.length === 0;
+    showToast('Месячный отчёт сформирован', `Заявок: ${issues.length}`);
+  } catch (error) {
+    errorBox.textContent = error.message; errorBox.hidden = false; copy.disabled = true;
+  } finally { submit.disabled = false; }
+}
+
+document.querySelector('#monthlyReportBack').addEventListener('click', closeMonthlyReportPage);
+document.querySelector('#monthlyReportBuild').addEventListener('click', () => {
+  const month = document.querySelector('#monthlyReportMonth');
+  if (month.reportValidity()) renderMonthlyReport(month.value);
+});
+document.querySelector('#monthlyReportCopy').addEventListener('click', async () => {
+  const text = monthlyReportPage.dataset.copyText || '';
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text; textarea.style.position = 'fixed'; textarea.style.opacity = '0';
+    document.body.append(textarea); textarea.select(); document.execCommand('copy'); textarea.remove();
+  }
+  showToast('Отчёт скопирован', 'Весь список помещён в буфер обмена');
 });
 function reportIssues(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
@@ -820,6 +905,10 @@ function openReportDataCheck(completedWeek, plannedWeek) {
 
 reportForm.addEventListener('submit', event => {
   event.preventDefault();
+  if (reportForm.elements.reportType.value === 'monthly') {
+    openMonthlyReportPage();
+    return;
+  }
   openReportDataCheck(reportForm.elements.completedWeek.value, reportForm.elements.plannedWeek.value);
 });
 reportDataModal.querySelector('.modal-close').addEventListener('click', () => { reportDataModal.hidden = true; });
