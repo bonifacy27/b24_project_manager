@@ -317,7 +317,7 @@ function findIssue(key) {
 }
 
 function updateSummary(totals = {}) {
-  ['ods', 'ssis'].forEach(project => {
+  ['ods', 'ssis', 'ditsd'].forEach(project => {
     document.querySelector(`[data-project="${project}"] b`).textContent = totals[project] ?? state.issues.filter(i => i.project === project).length;
   });
   const total = Object.values(totals).reduce((sum, value) => sum + Number(value), 0) || state.issues.length;

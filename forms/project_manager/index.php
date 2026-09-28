@@ -44,7 +44,7 @@ $nextWeekDates = $weekWorkdays($currentWeekMonday->modify('+7 days'));
 $currentYear = $today->format('Y');
 $nextYear = $today->modify('+1 year')->format('Y');
 ?>
-<link rel="stylesheet" href="/forms/project_manager/styles.css?v=26">
+<link rel="stylesheet" href="/forms/project_manager/styles.css?v=27">
 <div class="project-manager">
 <section class="content">
         <div class="page-heading">
@@ -53,10 +53,10 @@ $nextYear = $today->modify('+1 year')->format('Y');
         </div>
 
         <div class="stats" aria-label="Сводка">
-          <article class="summary-card active" data-summary-filter="all" tabindex="0"><div class="stat-icon blue">▤</div><div><span>Всего в работе</span><strong id="activeTotal">—</strong><small>ODS и SSIS</small></div></article>
+          <article class="summary-card active" data-summary-filter="all" tabindex="0"><div class="stat-icon blue">▤</div><div><span>Всего в работе</span><strong id="activeTotal">—</strong><small>ODS, SSIS и DITSD</small></div></article>
           <article class="summary-card" data-summary-filter="week" tabindex="0"><div class="stat-icon violet">◷</div><div><span>На этой неделе</span><strong id="weekTotal">—</strong><small>По сроку выполнения</small></div></article>
           <article class="summary-card" data-summary-filter="waiting" tabindex="0"><div class="stat-icon orange">⚑</div><div><span>Ожидают ответа</span><strong id="waitingTotal">—</strong><small>Уточнение информации, waiting, pending, ожидает</small></div></article>
-          <article class="summary-card" data-summary-filter="updated" tabindex="0"><div class="stat-icon green">✓</div><div><span>Обновлено сегодня</span><strong id="updatedTotal">—</strong><small>ODS и SSIS</small></div></article>
+          <article class="summary-card" data-summary-filter="updated" tabindex="0"><div class="stat-icon green">✓</div><div><span>Обновлено сегодня</span><strong id="updatedTotal">—</strong><small>ODS, SSIS и DITSD</small></div></article>
         </div>
 
         <div class="entity-tabs" role="tablist" aria-label="Разделы планирования">
@@ -65,7 +65,7 @@ $nextYear = $today->modify('+1 year')->format('Y');
         </div>
 
         <div class="toolbar">
-          <div class="project-tabs" role="tablist"><button class="active" data-project="all">Все проекты <b>—</b></button><button data-project="ods"><span class="project-dot ods"></span> ODS <b>—</b></button><button data-project="ssis"><span class="project-dot ssis"></span> SSIS <b>—</b></button></div>
+          <div class="project-tabs" role="tablist"><button class="active" data-project="all">Все проекты <b>—</b></button><button data-project="ods"><span class="project-dot ods"></span> ODS <b>—</b></button><button data-project="ssis"><span class="project-dot ssis"></span> SSIS <b>—</b></button><button data-project="ditsd"><span class="project-dot ditsd"></span> DITSD <b>—</b></button></div>
           <div class="view-actions"><details class="tag-filter option-filter" id="tagFilter"><summary>Все теги</summary><div class="option-filter-menu"><div class="tag-filter-options option-list"></div><button type="button" class="clear-tags">Сбросить</button></div></details><details class="status-filter option-filter" id="statusFilter"><summary>Все статусы Jira</summary><div class="option-filter-menu"><div class="status-options option-list"></div><button type="button" class="clear-statuses">Сбросить</button></div></details><label class="issue-search" aria-label="Поиск по номеру, краткому описанию, плану и факту"><span>⌕</span><input id="searchInput" type="search" placeholder="Номер, описание, план, факт"></label><button class="btn tertiary" id="refreshBtn" type="button">↻ <span>Обновить</span></button><div class="view-switch"><button class="active" type="button" data-view="board" aria-label="Канбан">▦</button><button type="button" data-view="list" aria-label="Список">☷</button></div></div>
         </div>
 
@@ -102,7 +102,7 @@ $nextYear = $today->modify('+1 year')->format('Y');
 <div class="modal-backdrop" id="reportModal" hidden><div class="modal report-modal" role="dialog" aria-modal="true" aria-labelledby="reportTitle"><button class="modal-close" type="button" aria-label="Закрыть">×</button><div class="modal-icon">↗</div><h2 id="reportTitle">Создать недельный отчёт</h2><p>Выберите отдельно неделю итогов и неделю планирования.</p><form id="reportForm"><input type="hidden" name="sessid" value="<?= htmlspecialchars(function_exists('bitrix_sessid') ? bitrix_sessid() : '', ENT_QUOTES) ?>"><label>Неделя выполненных задач<input required type="week" name="completedWeek"></label><label>Неделя запланированных задач<input required type="week" name="plannedWeek"></label><div class="form-error" role="alert" hidden></div><div class="modal-actions"><button type="button" class="btn secondary cancel">Отмена</button><button class="btn primary" type="submit">Скачать Excel</button></div></form></div></div>
 <div class="modal-backdrop" id="guideModal" hidden><div class="modal guide-modal" role="dialog" aria-modal="true" aria-labelledby="guideTitle"><button class="modal-close" type="button" aria-label="Закрыть руководство">×</button><div class="modal-icon">?</div><h2 id="guideTitle">Руководство пользователя</h2><div class="guide-content"><?php readfile(__DIR__ . '/user_guide.html'); ?></div></div></div>
   <div class="toast" id="toast"><span>✓</span><div><strong>Заявка создана</strong><small>Синхронизация с Jira запущена</small></div></div>
-<script src="/forms/project_manager/app.js?v=36"></script>
+<script src="/forms/project_manager/app.js?v=37"></script>
 <?php
 if (is_file($bitrixFooter)) {
     require $bitrixFooter;
