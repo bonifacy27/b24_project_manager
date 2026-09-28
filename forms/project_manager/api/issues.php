@@ -212,6 +212,37 @@ try {
     }
     $jiraAssignee = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $currentUserLogin) . '"';
 
+    $reportMonth = trim((string) ($_GET['report_month'] ?? ''));
+    if ($reportMonth !== '') {
+        if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $reportMonth)) {
+            throw new InvalidArgumentException('Некорректно указан месяц отчёта.');
+        }
+        $monthStart = new DateTimeImmutable($reportMonth . '-01');
+        $monthEnd = $monthStart->modify('+1 month');
+        foreach (array_keys($config['jira']['projects']) as $projectKey) {
+            $jql = sprintf(
+                'project = %s AND assignee = %s AND resolved >= "%s" AND resolved < "%s" ORDER BY resolved DESC',
+                strtoupper($projectKey), $jiraAssignee, $monthStart->format('Y-m-d'), $monthEnd->format('Y-m-d')
+            );
+            $result = $client->search($jql);
+            $issues = [...$issues, ...$result['issues']];
+        }
+        $metadata = $metadataStore->all();
+        $issues = array_map(static function (array $issue) use ($metadata): array {
+            $issue['metadata'] = $metadata[$issue['key']] ?? [
+                'issueKey' => $issue['key'], 'bucket' => 'completed', 'shortDescription' => '',
+                'complexity' => 'low', 'plannedWeek' => '', 'completedWeek' => '',
+                'tags' => [], 'plannedActions' => [], 'facts' => [], 'updatedAt' => null,
+            ];
+            return $issue;
+        }, $issues);
+        echo json_encode(
+            ['issues' => $issues, 'localProjects' => $metadataStore->projects()],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+        );
+        exit;
+    }
+
     foreach ($projects as $projectKey) {
         $jql = sprintf($config['jira']['jql'][$projectKey], $jiraAssignee);
         $result = $client->search($jql);

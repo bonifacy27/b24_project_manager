@@ -674,9 +674,55 @@ document.querySelector('#reportBtn').addEventListener('click', () => {
   const previous = new Date(); previous.setDate(previous.getDate() - 7);
   reportForm.elements.completedWeek.value = isoWeekValue(previous);
   reportForm.elements.plannedWeek.value = isoWeekValue(current);
+  reportForm.elements.reportMonth.value = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+  reportForm.elements.reportType.value = 'weekly';
+  updateReportType();
   reportModal.hidden = false;
   reportForm.elements.completedWeek.focus();
 });
+function updateReportType() {
+  const monthly = reportForm.elements.reportType.value === 'monthly';
+  reportForm.querySelector('.weekly-report-fields').hidden = monthly;
+  reportForm.querySelector('.monthly-report-fields').hidden = !monthly;
+  reportForm.elements.completedWeek.required = !monthly;
+  reportForm.elements.plannedWeek.required = !monthly;
+  reportForm.elements.reportMonth.required = monthly;
+  reportForm.querySelector('[type="submit"]').textContent = monthly ? 'Сформировать' : 'Скачать Excel';
+  reportModal.querySelector('.report-help').textContent = monthly
+    ? 'Будут показаны выполненные заявки средней сложности и выше.'
+    : 'Выберите отдельно неделю итогов и неделю планирования.';
+}
+reportForm.elements.reportType.addEventListener('change', updateReportType);
+
+async function renderMonthlyReport(month) {
+  const submit = reportForm.querySelector('[type="submit"]');
+  const errorBox = reportForm.querySelector('.form-error');
+  const result = reportForm.querySelector('.monthly-report-result');
+  submit.disabled = true; errorBox.hidden = true;
+  try {
+    const url = new URL(apiUrl);
+    url.searchParams.set('report_month', month);
+    const response = await fetch(url);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Ошибка загрузки (${response.status})`);
+    const issues = (payload.issues || []).filter(issue =>
+      requiresReportDetails(issue) && (state.project === 'all' || issue.project === state.project)
+    );
+    const projects = payload.localProjects || state.projects;
+    reportForm.querySelector('.monthly-report-list').innerHTML = issues.length ? issues.map(issue => {
+      const projectNames = projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
+      const project = projectNames.join(', ') || issue.project.toUpperCase();
+      const description = issue.metadata?.shortDescription || issue.summary || 'Без описания';
+      const fact = (issue.metadata?.facts || []).map(entry => entry.text).filter(Boolean).join('\n') || 'Факт не заполнен';
+      const tooltip = `Описание из Jira:\n${issue.description || 'Не заполнено'}\n\nФакт:\n${fact}`;
+      return `<div class="monthly-report-line" tabindex="0" title="${escapeHtml(tooltip)}"><a href="${escapeHtml(issue.url)}" target="_blank" rel="noopener">${escapeHtml(issue.key)}</a> ${escapeHtml(description)} ${escapeHtml(project)}<span class="report-tooltip" role="tooltip">${escapeHtml(tooltip)}</span></div>`;
+    }).join('') : '<div class="monthly-report-empty">За выбранный месяц подходящих заявок нет.</div>';
+    result.hidden = false;
+    showToast('Месячный отчёт сформирован', `Заявок: ${issues.length}`);
+  } catch (error) {
+    errorBox.textContent = error.message; errorBox.hidden = false; result.hidden = true;
+  } finally { submit.disabled = false; }
+}
 function reportIssues(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
     !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
@@ -820,6 +866,10 @@ function openReportDataCheck(completedWeek, plannedWeek) {
 
 reportForm.addEventListener('submit', event => {
   event.preventDefault();
+  if (reportForm.elements.reportType.value === 'monthly') {
+    renderMonthlyReport(reportForm.elements.reportMonth.value);
+    return;
+  }
   openReportDataCheck(reportForm.elements.completedWeek.value, reportForm.elements.plannedWeek.value);
 });
 reportDataModal.querySelector('.modal-close').addEventListener('click', () => { reportDataModal.hidden = true; });
