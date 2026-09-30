@@ -13,7 +13,7 @@ const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
 const monthlyReportPage = document.querySelector('#monthlyReportPage');
 const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
-const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
+const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -295,7 +295,8 @@ function render() {
         section.querySelector('.cards').innerHTML = sectionIssues.length
           ? sectionIssues.map(issueCard).join('')
           : '<div class="empty-card">Заявок пока нет.</div>';
-        section.querySelector('.later-section-count').textContent = sectionIssues.length;
+        const count = section.querySelector('.later-section-count');
+        if (count) count.textContent = sectionIssues.length;
         total += sectionIssues.length;
       });
       column.querySelector('header b').textContent = total;
@@ -372,6 +373,8 @@ async function loadIssues() {
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
     state.projects = Array.isArray(data.localProjects) ? data.localProjects : [];
+    state.laterSections = Array.isArray(data.laterSections) ? data.laterSections : [];
+    renderLaterSectionStructure();
     state.tagCatalog = [...new Set([...(data.tags || []), ...state.issues.flatMap(issue => issue.metadata?.tags || [])])]
       .sort((left, right) => left.localeCompare(right, 'ru'));
     state.creationOptions = data.creationOptions || {};
@@ -560,7 +563,7 @@ metadataForm.querySelector('.complete-jira').addEventListener('click', async eve
   }
 });
 
-document.querySelectorAll('#kanban .column:not(.later-column), #kanban .later-section').forEach(dropZone => {
+function bindIssueDropZone(dropZone) {
   dropZone.addEventListener('dragover', event => {
     if (!state.draggedKey) return;
     event.preventDefault();
@@ -586,9 +589,20 @@ document.querySelectorAll('#kanban .column:not(.later-column), #kanban .later-se
       showToast('Категория изменена', `${issue.key} → ${bucketLabels[bucket]}`);
     } catch (error) { showToast('Не удалось переместить', error.message, true); }
   });
-});
+}
 
-const collapsedLaterSectionsKey = 'project-manager.collapsed-later-sections.v1';
+document.querySelectorAll('#kanban .column:not(.later-column)').forEach(bindIssueDropZone);
+
+const collapsedLaterSectionsKey = 'project-manager.collapsed-later-sections.v2';
+
+function collapsedLaterSections() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(collapsedLaterSectionsKey) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch (error) {
+    return [];
+  }
+}
 
 function saveCollapsedLaterSections() {
   try {
@@ -602,24 +616,56 @@ function saveCollapsedLaterSections() {
 function setLaterSectionCollapsed(section, collapsed) {
   section.classList.toggle('collapsed', collapsed);
   const toggle = section.querySelector('.later-section-toggle');
+  if (!toggle) return;
   toggle.setAttribute('aria-expanded', String(!collapsed));
   toggle.setAttribute('aria-label', `${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${section.dataset.label}»`);
 }
 
-let collapsedLaterSections = [];
-try {
-  const storedSections = JSON.parse(localStorage.getItem(collapsedLaterSectionsKey) || '[]');
-  if (Array.isArray(storedSections)) collapsedLaterSections = storedSections;
-} catch (error) {
-  collapsedLaterSections = [];
-}
-document.querySelectorAll('.later-section').forEach(section => {
-  setLaterSectionCollapsed(section, collapsedLaterSections.includes(section.dataset.bucket));
-  section.querySelector('.later-section-toggle').addEventListener('click', () => {
-    setLaterSectionCollapsed(section, !section.classList.contains('collapsed'));
-    saveCollapsedLaterSections();
+function bindLaterSection(section) {
+  bindIssueDropZone(section);
+  const toggle = section.querySelector('.later-section-toggle');
+  if (toggle) {
+    setLaterSectionCollapsed(section, collapsedLaterSections().includes(section.dataset.bucket));
+    toggle.addEventListener('click', () => {
+      setLaterSectionCollapsed(section, !section.classList.contains('collapsed'));
+      saveCollapsedLaterSections();
+    });
+  }
+  const remove = section.querySelector('.delete-later-section');
+  if (remove) remove.addEventListener('click', async () => {
+    if (!confirm(`Удалить раздел «${section.dataset.label}»? Заявки останутся в колонке «Позже».`)) return;
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ action: 'deleteLaterSection', sectionId: remove.dataset.sectionId, sessid: metadataForm.elements.sessid.value })
+      });
+      const data = await readApiResponse(response);
+      if (!response.ok) throw new Error(data.error || `Ошибка API (${response.status})`);
+      state.laterSections = data.laterSections || [];
+      await loadIssues();
+      showToast('Раздел удалён', 'Заявки перемещены в «Позже»');
+    } catch (error) { showToast('Не удалось удалить раздел', error.message, true); }
   });
-});
+}
+
+function renderLaterSectionStructure() {
+  const container = board.querySelector('.later-sections');
+  const sectionMarkup = state.laterSections.map(section => `<section class="later-section drop-zone" data-bucket="${escapeHtml(section.bucket)}" data-label="${escapeHtml(section.name)}"><div class="later-section-header"><button class="later-section-toggle" type="button" aria-expanded="true"><span>${escapeHtml(section.name)}</span><b class="later-section-count">0</b><i aria-hidden="true">⌄</i></button><button class="delete-later-section" type="button" data-section-id="${section.id}" aria-label="Удалить раздел «${escapeHtml(section.name)}»">×</button></div><div class="cards"></div></section>`).join('');
+  const defaultHeading = state.laterSections.length
+    ? '<button class="later-section-toggle" type="button" aria-expanded="true"><span>Без раздела</span><b class="later-section-count">0</b><i aria-hidden="true">⌄</i></button>'
+    : '';
+  container.innerHTML = `${sectionMarkup}<section class="later-section later-default drop-zone" data-bucket="deferred" data-label="${state.laterSections.length ? 'Без раздела' : 'Позже'}">${defaultHeading}<div class="cards"></div></section>`;
+  state.laterSections.forEach(section => { bucketLabels[section.bucket] = section.name; });
+  bucketLabels.deferred = state.laterSections.length ? 'Без раздела' : 'Позже';
+  const select = metadataForm.elements.bucket;
+  select.querySelectorAll('option[data-user-section]').forEach(option => option.remove());
+  state.laterSections.forEach(section => {
+    const option = document.createElement('option');
+    option.value = section.bucket; option.textContent = `Позже → ${section.name}`; option.dataset.userSection = 'true';
+    select.append(option);
+  });
+  container.querySelectorAll('.later-section').forEach(bindLaterSection);
+}
 
 const columnOrderKey = 'project-manager.issue-column-order.v2';
 
@@ -692,6 +738,22 @@ issueColumns().forEach(column => {
   column.querySelectorAll('.move-column').forEach(button => {
     button.addEventListener('click', () => moveColumn(column, button.dataset.direction));
   });
+});
+
+document.querySelector('.add-later-section').addEventListener('click', async () => {
+  const name = prompt('Название нового раздела в колонке «Позже»:')?.trim();
+  if (!name) return;
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ action: 'saveLaterSection', name, sessid: metadataForm.elements.sessid.value })
+    });
+    const data = await readApiResponse(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка API (${response.status})`);
+    state.laterSections = data.laterSections || [];
+    renderLaterSectionStructure(); render();
+    showToast('Раздел добавлен', data.section.name);
+  } catch (error) { showToast('Не удалось добавить раздел', error.message, true); }
 });
 
 form.addEventListener('submit', async event => {

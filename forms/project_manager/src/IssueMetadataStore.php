@@ -14,8 +14,9 @@ final class IssueMetadataStore
     private const PROJECTS_TABLE = 'b_project_manager_projects';
     private const PROJECT_ISSUES_TABLE = 'b_project_manager_project_issues';
     private const ISSUE_TAGS_TABLE = 'b_project_manager_issue_tags';
+    private const LATER_SECTIONS_TABLE = 'b_project_manager_later_sections';
     private const LEGACY_USER_ID = 3532;
-    private const BUCKETS = ['backlog', 'later_ready', 'later_second', 'week', 'next', 'completed', 'deferred'];
+    private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'deferred'];
     private const COMPLEXITIES = ['low', 'medium', 'high', 'maximum'];
 
     private readonly object $connection;
@@ -78,6 +79,19 @@ final class IssueMetadataStore
             ' PRIMARY KEY (PROJECT_ID, ISSUE_KEY),' .
             ' KEY IX_ISSUE_KEY (ISSUE_KEY)' .
             ')'
+        );
+        $this->connection->queryExecute(
+            'CREATE TABLE IF NOT EXISTS ' . self::LATER_SECTIONS_TABLE . ' (' .
+            ' ID int unsigned NOT NULL AUTO_INCREMENT,' .
+            ' USER_ID int unsigned NOT NULL,' .
+            ' NAME varchar(64) NOT NULL,' .
+            ' SORT int unsigned NOT NULL DEFAULT 500,' .
+            ' PRIMARY KEY (ID),' .
+            ' KEY IX_USER_SORT (USER_ID, SORT)' .
+            ')'
+        );
+        $this->connection->queryExecute(
+            'UPDATE ' . self::TABLE . " SET BUCKET = 'deferred' WHERE BUCKET IN ('later_ready', 'later_second')"
         );
         $complexityColumn = $this->connection->query("SHOW COLUMNS FROM " . self::TABLE . " LIKE 'COMPLEXITY'")->fetch();
         if (!$complexityColumn) {
@@ -199,6 +213,73 @@ final class IssueMetadataStore
         return array_values($projects);
     }
 
+    /** @return list<array{id: int, bucket: string, name: string, sort: int}> */
+    public function laterSections(): array
+    {
+        $sections = [];
+        $result = $this->connection->query(
+            'SELECT ID, NAME, SORT FROM ' . self::LATER_SECTIONS_TABLE . ' WHERE USER_ID = ' . $this->userId . ' ORDER BY SORT, ID'
+        );
+        while ($row = $result->fetch()) {
+            $id = (int) $row['ID'];
+            $sections[] = ['id' => $id, 'bucket' => 'later_' . $id, 'name' => (string) $row['NAME'], 'sort' => (int) $row['SORT']];
+        }
+        return $sections;
+    }
+
+    /** @return array{id: int, bucket: string, name: string, sort: int} */
+    public function saveLaterSection(string $name): array
+    {
+        $name = trim($name);
+        if ($name === '' || mb_strlen($name) > 64) {
+            throw new \InvalidArgumentException('Название раздела обязательно и не должно превышать 64 символа.');
+        }
+        $sql = $this->connection->getSqlHelper();
+        $safeName = $sql->forSql($name, 64);
+        $existing = $this->connection->query(
+            'SELECT COUNT(*) AS CNT FROM ' . self::LATER_SECTIONS_TABLE . ' WHERE USER_ID = ' . $this->userId
+        )->fetch();
+        if ((int) ($existing['CNT'] ?? 0) >= 20) {
+            throw new \InvalidArgumentException('Можно создать не более 20 разделов в колонке «Позже».');
+        }
+        $row = $this->connection->query(
+            'SELECT COALESCE(MAX(SORT), 0) AS MAX_SORT FROM ' . self::LATER_SECTIONS_TABLE . ' WHERE USER_ID = ' . $this->userId
+        )->fetch();
+        $sort = (int) ($row['MAX_SORT'] ?? 0) + 100;
+        $this->connection->queryExecute(
+            'INSERT INTO ' . self::LATER_SECTIONS_TABLE . " (USER_ID, NAME, SORT) VALUES ({$this->userId}, '{$safeName}', {$sort})"
+        );
+        $id = (int) $this->connection->getInsertedId();
+        return ['id' => $id, 'bucket' => 'later_' . $id, 'name' => $name, 'sort' => $sort];
+    }
+
+    public function deleteLaterSection(int $id): void
+    {
+        if ($id < 1 || !$this->connection->query(
+            'SELECT ID FROM ' . self::LATER_SECTIONS_TABLE . " WHERE ID = {$id} AND USER_ID = {$this->userId}"
+        )->fetch()) {
+            throw new \InvalidArgumentException('Раздел не найден.');
+        }
+        $bucket = $this->connection->getSqlHelper()->forSql('later_' . $id, 32);
+        $this->connection->queryExecute('UPDATE ' . self::TABLE . " SET BUCKET = 'deferred' WHERE BUCKET = '{$bucket}'");
+        $this->connection->queryExecute(
+            'DELETE FROM ' . self::LATER_SECTIONS_TABLE . " WHERE ID = {$id} AND USER_ID = {$this->userId}"
+        );
+    }
+
+    private function isValidBucket(string $bucket): bool
+    {
+        if (in_array($bucket, self::BUCKETS, true)) {
+            return true;
+        }
+        if (!preg_match('/^later_(\d+)$/', $bucket, $matches)) {
+            return false;
+        }
+        return (bool) $this->connection->query(
+            'SELECT ID FROM ' . self::LATER_SECTIONS_TABLE . ' WHERE ID = ' . (int) $matches[1] . ' AND USER_ID = ' . $this->userId
+        )->fetch();
+    }
+
     /** @param list<string> $issueKeys
      *  @return array{id: int, name: string, description: string, year: int, issueKeys: list<string>}
      */
@@ -299,7 +380,7 @@ final class IssueMetadataStore
     {
         $issueKey = strtoupper(trim($issueKey));
         $bucket = strtolower(trim((string) ($input['bucket'] ?? '')));
-        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey) || !in_array($bucket, self::BUCKETS, true)) {
+        if (!preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $issueKey) || !$this->isValidBucket($bucket)) {
             throw new \InvalidArgumentException('Неверно указаны ключ Jira или категория.');
         }
 
@@ -490,7 +571,7 @@ final class IssueMetadataStore
     {
         return [
             'issueKey' => (string) $row['ISSUE_KEY'],
-            'bucket' => in_array($row['BUCKET'], self::BUCKETS, true) ? $row['BUCKET'] : 'backlog',
+            'bucket' => $this->isValidBucket((string) $row['BUCKET']) ? (string) $row['BUCKET'] : 'deferred',
             'complexity' => in_array($row['COMPLEXITY'] ?? '', self::COMPLEXITIES, true) ? $row['COMPLEXITY'] : 'low',
             'plannedWeek' => (string) ($row['PLANNED_WEEK'] ?? ''),
             'completedWeek' => (string) ($row['COMPLETED_WEEK'] ?? ''),
