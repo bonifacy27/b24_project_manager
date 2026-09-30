@@ -588,7 +588,7 @@ document.querySelectorAll('#kanban .column:not(.later-column), #kanban .later-se
   });
 });
 
-const columnOrderKey = 'project-manager.issue-column-order.v1';
+const columnOrderKey = 'project-manager.issue-column-order.v2';
 
 function issueColumns() {
   return [...board.querySelectorAll(':scope > .column')];
@@ -669,7 +669,7 @@ form.addEventListener('submit', async event => {
     const response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     const data = await readApiResponse(response);
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
-    closeModal(); form.reset(); showToast(`Заявка ${data.issue.key} создана`, 'Добавлена в «Позже → Без срока»'); await loadIssues();
+    closeModal(); form.reset(); showToast(`Заявка ${data.issue.key} создана`, 'Добавлена в бэклог'); await loadIssues();
   } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
   finally { submit.disabled = false; submit.textContent = 'Создать заявку'; }
 });
