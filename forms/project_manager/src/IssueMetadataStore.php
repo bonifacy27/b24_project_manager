@@ -15,7 +15,7 @@ final class IssueMetadataStore
     private const PROJECT_ISSUES_TABLE = 'b_project_manager_project_issues';
     private const ISSUE_TAGS_TABLE = 'b_project_manager_issue_tags';
     private const LEGACY_USER_ID = 3532;
-    private const BUCKETS = ['backlog', 'week', 'next', 'completed', 'deferred'];
+    private const BUCKETS = ['backlog', 'later_ready', 'later_second', 'week', 'next', 'completed', 'deferred'];
     private const COMPLEXITIES = ['low', 'medium', 'high', 'maximum'];
 
     private readonly object $connection;

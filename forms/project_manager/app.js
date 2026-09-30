@@ -13,7 +13,7 @@ const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
 const monthlyReportPage = document.querySelector('#monthlyReportPage');
 const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
-const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, summaryFilter: 'all', pendingReport: null };
+const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -23,7 +23,8 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character =>
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
 })[character]);
 const bucketLabels = Object.fromEntries(
-  [...document.querySelectorAll('.column[data-column]')].map(column => [column.dataset.column, column.dataset.label])
+  [...document.querySelectorAll('[data-column][data-label], [data-bucket][data-label]')]
+    .map(element => [element.dataset.bucket || element.dataset.column, element.dataset.label])
 );
 const complexityLabels = { low: 'Низкая', medium: 'Средняя', high: 'Высокая', maximum: 'Максимальная' };
 
@@ -287,6 +288,19 @@ function render() {
       column.querySelector('header b').textContent = projects.length;
       return;
     }
+    if (column.dataset.column === 'later') {
+      let total = 0;
+      column.querySelectorAll('.later-section').forEach(section => {
+        const sectionIssues = issues.filter(issue => targetColumn(issue) === section.dataset.bucket);
+        section.querySelector('.cards').innerHTML = sectionIssues.length
+          ? sectionIssues.map(issueCard).join('')
+          : '<div class="empty-card">Заявок пока нет.</div>';
+        section.querySelector('h3 b').textContent = sectionIssues.length;
+        total += sectionIssues.length;
+      });
+      column.querySelector('header b').textContent = total;
+      return;
+    }
     const columnIssues = issues.filter(issue => targetColumn(issue) === column.dataset.column);
     column.querySelector('.cards').innerHTML = columnIssues.length
       ? columnIssues.map(issueCard).join('')
@@ -546,14 +560,18 @@ metadataForm.querySelector('.complete-jira').addEventListener('click', async eve
   }
 });
 
-document.querySelectorAll('.column').forEach(column => {
-  column.addEventListener('dragover', event => { if (!['year', 'next_year'].includes(column.dataset.column)) { event.preventDefault(); column.classList.add('drag-over'); } });
-  column.addEventListener('dragleave', event => { if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over'); });
-  column.addEventListener('drop', async event => {
-    event.preventDefault(); column.classList.remove('drag-over');
+document.querySelectorAll('#kanban .column:not(.later-column), #kanban .later-section').forEach(dropZone => {
+  dropZone.addEventListener('dragover', event => {
+    if (!state.draggedKey) return;
+    event.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', event => { if (!dropZone.contains(event.relatedTarget)) dropZone.classList.remove('drag-over'); });
+  dropZone.addEventListener('drop', async event => {
+    if (!state.draggedKey) return;
+    event.preventDefault(); event.stopPropagation(); dropZone.classList.remove('drag-over');
     const issue = findIssue(state.draggedKey);
-    const bucket = column.dataset.column;
-    if (['year', 'next_year'].includes(bucket)) return;
+    const bucket = dropZone.dataset.bucket || dropZone.dataset.column;
     if (!issue || targetColumn(issue) === bucket) return;
     if (bucket === 'completed' && !isJiraCompleted(issue.status)) {
       openMetadata(issue, bucket);
@@ -570,6 +588,79 @@ document.querySelectorAll('.column').forEach(column => {
   });
 });
 
+const columnOrderKey = 'project-manager.issue-column-order.v1';
+
+function issueColumns() {
+  return [...board.querySelectorAll(':scope > .column')];
+}
+
+function saveColumnOrder() {
+  try {
+    localStorage.setItem(columnOrderKey, JSON.stringify(issueColumns().map(column => column.dataset.column)));
+  } catch (error) {
+    // Reordering remains available when browser storage is disabled.
+  }
+}
+
+function restoreColumnOrder() {
+  try {
+    const order = JSON.parse(localStorage.getItem(columnOrderKey) || '[]');
+    if (!Array.isArray(order)) return;
+    const columns = new Map(issueColumns().map(column => [column.dataset.column, column]));
+    order.forEach(key => { if (columns.has(key)) board.append(columns.get(key)); });
+    columns.forEach(column => { if (!order.includes(column.dataset.column)) board.append(column); });
+  } catch (error) {
+    localStorage.removeItem(columnOrderKey);
+  }
+}
+
+function moveColumn(column, direction) {
+  const sibling = direction === 'left' ? column.previousElementSibling : column.nextElementSibling;
+  if (!sibling) return;
+  if (direction === 'left') board.insertBefore(column, sibling);
+  else board.insertBefore(sibling, column);
+  saveColumnOrder();
+  column.querySelector('header').focus({ preventScroll: true });
+}
+
+restoreColumnOrder();
+issueColumns().forEach(column => {
+  const header = column.querySelector(':scope > header');
+  header.tabIndex = 0;
+  header.addEventListener('dragstart', event => {
+    if (event.target.closest('button')) { event.preventDefault(); return; }
+    state.draggedColumn = column.dataset.column;
+    column.classList.add('column-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/x-kanban-column', state.draggedColumn);
+  });
+  header.addEventListener('dragend', () => {
+    state.draggedColumn = null;
+    column.classList.remove('column-dragging');
+    issueColumns().forEach(item => item.classList.remove('column-order-target'));
+  });
+  column.addEventListener('dragover', event => {
+    if (!state.draggedColumn || state.draggedColumn === column.dataset.column) return;
+    event.preventDefault();
+    column.classList.add('column-order-target');
+  });
+  column.addEventListener('dragleave', event => {
+    if (!column.contains(event.relatedTarget)) column.classList.remove('column-order-target');
+  });
+  column.addEventListener('drop', event => {
+    if (!state.draggedColumn || state.draggedColumn === column.dataset.column) return;
+    event.preventDefault();
+    const dragged = board.querySelector(`[data-column="${state.draggedColumn}"]`);
+    const box = column.getBoundingClientRect();
+    board.insertBefore(dragged, event.clientX < box.left + box.width / 2 ? column : column.nextElementSibling);
+    column.classList.remove('column-order-target');
+    saveColumnOrder();
+  });
+  column.querySelectorAll('.move-column').forEach(button => {
+    button.addEventListener('click', () => moveColumn(column, button.dataset.direction));
+  });
+});
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   const submit = form.querySelector('[type="submit"]'); const errorBox = form.querySelector('.form-error');
@@ -578,7 +669,7 @@ form.addEventListener('submit', async event => {
     const response = await fetch(apiUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
     const data = await readApiResponse(response);
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
-    closeModal(); form.reset(); showToast(`Заявка ${data.issue.key} создана`, 'Добавлена в бэклог'); await loadIssues();
+    closeModal(); form.reset(); showToast(`Заявка ${data.issue.key} создана`, 'Добавлена в «Позже → Без срока»'); await loadIssues();
   } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
   finally { submit.disabled = false; submit.textContent = 'Создать заявку'; }
 });
