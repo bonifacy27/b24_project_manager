@@ -295,7 +295,7 @@ function render() {
         section.querySelector('.cards').innerHTML = sectionIssues.length
           ? sectionIssues.map(issueCard).join('')
           : '<div class="empty-card">Заявок пока нет.</div>';
-        section.querySelector('h3 b').textContent = sectionIssues.length;
+        section.querySelector('.later-section-count').textContent = sectionIssues.length;
         total += sectionIssues.length;
       });
       column.querySelector('header b').textContent = total;
@@ -585,6 +585,39 @@ document.querySelectorAll('#kanban .column:not(.later-column), #kanban .later-se
       await saveMetadata(values);
       showToast('Категория изменена', `${issue.key} → ${bucketLabels[bucket]}`);
     } catch (error) { showToast('Не удалось переместить', error.message, true); }
+  });
+});
+
+const collapsedLaterSectionsKey = 'project-manager.collapsed-later-sections.v1';
+
+function saveCollapsedLaterSections() {
+  try {
+    const buckets = [...document.querySelectorAll('.later-section.collapsed')].map(section => section.dataset.bucket);
+    localStorage.setItem(collapsedLaterSectionsKey, JSON.stringify(buckets));
+  } catch (error) {
+    // Collapsing remains available when browser storage is disabled.
+  }
+}
+
+function setLaterSectionCollapsed(section, collapsed) {
+  section.classList.toggle('collapsed', collapsed);
+  const toggle = section.querySelector('.later-section-toggle');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', `${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${section.dataset.label}»`);
+}
+
+let collapsedLaterSections = [];
+try {
+  const storedSections = JSON.parse(localStorage.getItem(collapsedLaterSectionsKey) || '[]');
+  if (Array.isArray(storedSections)) collapsedLaterSections = storedSections;
+} catch (error) {
+  collapsedLaterSections = [];
+}
+document.querySelectorAll('.later-section').forEach(section => {
+  setLaterSectionCollapsed(section, collapsedLaterSections.includes(section.dataset.bucket));
+  section.querySelector('.later-section-toggle').addEventListener('click', () => {
+    setLaterSectionCollapsed(section, !section.classList.contains('collapsed'));
+    saveCollapsedLaterSections();
   });
 });
 
