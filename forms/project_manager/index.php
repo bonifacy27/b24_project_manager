@@ -44,7 +44,7 @@ $nextWeekDates = $weekWorkdays($currentWeekMonday->modify('+7 days'));
 $currentYear = $today->format('Y');
 $nextYear = $today->modify('+1 year')->format('Y');
 ?>
-<link rel="stylesheet" href="/forms/project_manager/styles.css?v=34">
+<link rel="stylesheet" href="/forms/project_manager/styles.css?v=35">
 <div class="project-manager">
 <section class="content">
         <div class="page-heading">
