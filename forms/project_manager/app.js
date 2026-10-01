@@ -262,6 +262,7 @@ function visibleIssues() {
     const searchFields = [
       issue.key,
       issue.summary,
+      issue.description,
       issue.metadata?.shortDescription,
       ...(issue.metadata?.plannedActions || []).map(entry => entry.text),
       ...(issue.metadata?.facts || []).map(entry => entry.text)
