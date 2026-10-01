@@ -13,7 +13,7 @@ const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
 const monthlyReportPage = document.querySelector('#monthlyReportPage');
 const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
-const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
+const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', cardView: 'full', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -233,9 +233,9 @@ function issueCard(issue) {
   const tags = issue.metadata?.tags || [];
   const linkedIssues = issue.linkedIssues || [];
   const projects = state.projects.filter(item => item.issueKeys.includes(issue.key));
-  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
-    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}" title="${escapeHtml(issue.description || 'Описание в Jira не добавлено')}">
+    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" aria-label="Открыть ${escapeHtml(issue.key)} в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
+    <h3>${escapeHtml(issue.summary)}</h3><p class="compact-description">${escapeHtml(issue.metadata?.shortDescription || issue.summary)}</p><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -857,6 +857,26 @@ document.querySelectorAll('.view-switch button').forEach(button => button.addEve
   document.querySelectorAll('.view-switch button').forEach(item => item.classList.remove('active'));
   button.classList.add('active'); state.view = button.dataset.view; board.classList.toggle('list-view', state.view === 'list');
 }));
+const cardViewStorageKey = 'project-manager.card-view.v1';
+try {
+  state.cardView = localStorage.getItem(cardViewStorageKey) === 'compact' ? 'compact' : 'full';
+} catch (error) {
+  state.cardView = 'full';
+}
+function applyCardView() {
+  board.classList.toggle('compact-cards', state.cardView === 'compact');
+  document.querySelectorAll('.card-view-switch button').forEach(button => {
+    const active = button.dataset.cardView === state.cardView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+document.querySelectorAll('.card-view-switch button').forEach(button => button.addEventListener('click', () => {
+  state.cardView = button.dataset.cardView;
+  try { localStorage.setItem(cardViewStorageKey, state.cardView); } catch (error) { /* The view still works without storage. */ }
+  applyCardView();
+}));
+applyCardView();
 document.querySelector('#reportBtn').addEventListener('click', () => {
   const current = new Date();
   const previous = new Date(); previous.setDate(previous.getDate() - 7);
