@@ -70,6 +70,16 @@ try {
             echo json_encode(['project' => $savedProject], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
             exit;
         }
+        if (($input['action'] ?? '') === 'saveLaterSection') {
+            $section = $metadataStore->saveLaterSection((string) ($input['name'] ?? ''));
+            echo json_encode(['section' => $section, 'laterSections' => $metadataStore->laterSections()], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            exit;
+        }
+        if (($input['action'] ?? '') === 'deleteLaterSection') {
+            $metadataStore->deleteLaterSection((int) ($input['sectionId'] ?? 0));
+            echo json_encode(['laterSections' => $metadataStore->laterSections()], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            exit;
+        }
         $metadata = $metadataStore->save((string) ($input['issueKey'] ?? ''), is_array($input) ? $input : []);
         if (array_key_exists('projectIds', $input)) {
             $metadataStore->setIssueProjects(
@@ -295,6 +305,7 @@ try {
         'tags' => $metadataStore->tags(),
         'creationOptions' => $creationOptions,
         'localProjects' => $localProjects,
+        'laterSections' => $metadataStore->laterSections(),
         'syncedAt' => gmdate(DATE_ATOM),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
 } catch (Throwable $exception) {

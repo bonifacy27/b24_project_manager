@@ -13,7 +13,7 @@ const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
 const monthlyReportPage = document.querySelector('#monthlyReportPage');
 const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
-const state = { issues: [], projects: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', draggedKey: null, summaryFilter: 'all', pendingReport: null };
+const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', cardView: 'full', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -23,7 +23,8 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character =>
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
 })[character]);
 const bucketLabels = Object.fromEntries(
-  [...document.querySelectorAll('.column[data-column]')].map(column => [column.dataset.column, column.dataset.label])
+  [...document.querySelectorAll('[data-column][data-label], [data-bucket][data-label]')]
+    .map(element => [element.dataset.bucket || element.dataset.column, element.dataset.label])
 );
 const complexityLabels = { low: 'Низкая', medium: 'Средняя', high: 'Высокая', maximum: 'Максимальная' };
 
@@ -232,9 +233,9 @@ function issueCard(issue) {
   const tags = issue.metadata?.tags || [];
   const linkedIssues = issue.linkedIssues || [];
   const projects = state.projects.filter(item => item.issueKeys.includes(issue.key));
-  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}">
-    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" title="Открыть в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
-    <h3>${escapeHtml(issue.summary)}</h3><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+  return `<article class="task-card" data-project="${project}" tabindex="0" draggable="true" data-key="${escapeHtml(issue.key)}" title="${escapeHtml(issue.description || 'Описание в Jira не добавлено')}">
+    <div class="card-top"><a class="key issue-link ${project}-key" href="${escapeHtml(issue.url)}" target="_blank" rel="noopener" aria-label="Открыть ${escapeHtml(issue.key)} в Jira">${escapeHtml(issue.key)}</a><span class="complexity ${complexity}">${complexityLabels[complexity]}</span><span class="status-pill">${escapeHtml(issue.status)}</span></div>
+    <h3>${escapeHtml(issue.summary)}</h3><p class="compact-description">${escapeHtml(issue.metadata?.shortDescription || issue.summary)}</p><div class="issue-created">Создано: ${escapeHtml(formatIssueDate(issue.created))}</div>${jiraDescription}${projects.length ? `<div class="card-projects">Проекты: ${projects.map(item => `<span>${escapeHtml(item.name)}</span>`).join('')}</div>` : ''}${linkedIssues.length ? `<div class="card-links">Связано: ${linkedIssues.map(link => `<a class="issue-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.key)}</a>`).join(', ')}</div>` : ''}${tags.length ? `<div class="issue-tags">${tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
     <div class="note-counts"><span>План: ${issue.metadata?.plannedActions?.length || 0}</span><span>Факт: ${issue.metadata?.facts?.length || 0}</span>${plannedWeek ? `<span>Неделя плана: ${escapeHtml(plannedWeek)}</span>` : ''}${completedWeek ? `<span>Выполнено: ${escapeHtml(completedWeek)}</span>` : ''}</div>
     <div class="card-meta"><span class="assignee" title="${escapeHtml(issue.assignee?.name || 'Не назначен')}">${avatar}</span><span>${escapeHtml(issue.type || 'Заявка')}</span><button class="edit-metadata" type="button" aria-label="Редактировать план">✎ План</button></div>
   </article>`;
@@ -285,6 +286,20 @@ function render() {
         ? projects.map(projectCard).join('')
         : '<div class="empty-card">На этот год проектов пока нет.</div>';
       column.querySelector('header b').textContent = projects.length;
+      return;
+    }
+    if (column.dataset.column === 'later') {
+      let total = 0;
+      column.querySelectorAll('.later-section').forEach(section => {
+        const sectionIssues = issues.filter(issue => targetColumn(issue) === section.dataset.bucket);
+        section.querySelector('.cards').innerHTML = sectionIssues.length
+          ? sectionIssues.map(issueCard).join('')
+          : '<div class="empty-card">Заявок пока нет.</div>';
+        const count = section.querySelector('.later-section-count');
+        if (count) count.textContent = sectionIssues.length;
+        total += sectionIssues.length;
+      });
+      column.querySelector('header b').textContent = total;
       return;
     }
     const columnIssues = issues.filter(issue => targetColumn(issue) === column.dataset.column);
@@ -358,6 +373,8 @@ async function loadIssues() {
     if (!response.ok) { showDiagnostics(data.diagnostics); throw new Error(data.error || `Ошибка Jira (${response.status})`); }
     state.issues = Array.isArray(data.issues) ? data.issues : [];
     state.projects = Array.isArray(data.localProjects) ? data.localProjects : [];
+    state.laterSections = Array.isArray(data.laterSections) ? data.laterSections : [];
+    renderLaterSectionStructure();
     state.tagCatalog = [...new Set([...(data.tags || []), ...state.issues.flatMap(issue => issue.metadata?.tags || [])])]
       .sort((left, right) => left.localeCompare(right, 'ru'));
     state.creationOptions = data.creationOptions || {};
@@ -546,14 +563,18 @@ metadataForm.querySelector('.complete-jira').addEventListener('click', async eve
   }
 });
 
-document.querySelectorAll('.column').forEach(column => {
-  column.addEventListener('dragover', event => { if (!['year', 'next_year'].includes(column.dataset.column)) { event.preventDefault(); column.classList.add('drag-over'); } });
-  column.addEventListener('dragleave', event => { if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over'); });
-  column.addEventListener('drop', async event => {
-    event.preventDefault(); column.classList.remove('drag-over');
+function bindIssueDropZone(dropZone) {
+  dropZone.addEventListener('dragover', event => {
+    if (!state.draggedKey) return;
+    event.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', event => { if (!dropZone.contains(event.relatedTarget)) dropZone.classList.remove('drag-over'); });
+  dropZone.addEventListener('drop', async event => {
+    if (!state.draggedKey) return;
+    event.preventDefault(); event.stopPropagation(); dropZone.classList.remove('drag-over');
     const issue = findIssue(state.draggedKey);
-    const bucket = column.dataset.column;
-    if (['year', 'next_year'].includes(bucket)) return;
+    const bucket = dropZone.dataset.bucket || dropZone.dataset.column;
     if (!issue || targetColumn(issue) === bucket) return;
     if (bucket === 'completed' && !isJiraCompleted(issue.status)) {
       openMetadata(issue, bucket);
@@ -568,6 +589,171 @@ document.querySelectorAll('.column').forEach(column => {
       showToast('Категория изменена', `${issue.key} → ${bucketLabels[bucket]}`);
     } catch (error) { showToast('Не удалось переместить', error.message, true); }
   });
+}
+
+document.querySelectorAll('#kanban .column:not(.later-column)').forEach(bindIssueDropZone);
+
+const collapsedLaterSectionsKey = 'project-manager.collapsed-later-sections.v2';
+
+function collapsedLaterSections() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(collapsedLaterSectionsKey) || '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveCollapsedLaterSections() {
+  try {
+    const buckets = [...document.querySelectorAll('.later-section.collapsed')].map(section => section.dataset.bucket);
+    localStorage.setItem(collapsedLaterSectionsKey, JSON.stringify(buckets));
+  } catch (error) {
+    // Collapsing remains available when browser storage is disabled.
+  }
+}
+
+function setLaterSectionCollapsed(section, collapsed) {
+  section.classList.toggle('collapsed', collapsed);
+  const toggle = section.querySelector('.later-section-toggle');
+  if (!toggle) return;
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', `${collapsed ? 'Развернуть' : 'Свернуть'} раздел «${section.dataset.label}»`);
+}
+
+function bindLaterSection(section) {
+  bindIssueDropZone(section);
+  const toggle = section.querySelector('.later-section-toggle');
+  if (toggle) {
+    setLaterSectionCollapsed(section, collapsedLaterSections().includes(section.dataset.bucket));
+    toggle.addEventListener('click', () => {
+      setLaterSectionCollapsed(section, !section.classList.contains('collapsed'));
+      saveCollapsedLaterSections();
+    });
+  }
+  const remove = section.querySelector('.delete-later-section');
+  if (remove) remove.addEventListener('click', async () => {
+    if (!confirm(`Удалить раздел «${section.dataset.label}»? Заявки останутся в колонке «Позже».`)) return;
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ action: 'deleteLaterSection', sectionId: remove.dataset.sectionId, sessid: metadataForm.elements.sessid.value })
+      });
+      const data = await readApiResponse(response);
+      if (!response.ok) throw new Error(data.error || `Ошибка API (${response.status})`);
+      state.laterSections = data.laterSections || [];
+      await loadIssues();
+      showToast('Раздел удалён', 'Заявки перемещены в «Позже»');
+    } catch (error) { showToast('Не удалось удалить раздел', error.message, true); }
+  });
+}
+
+function renderLaterSectionStructure() {
+  const container = board.querySelector('.later-sections');
+  const sectionMarkup = state.laterSections.map(section => `<section class="later-section drop-zone" data-bucket="${escapeHtml(section.bucket)}" data-label="${escapeHtml(section.name)}"><div class="later-section-header"><button class="later-section-toggle" type="button" aria-expanded="true"><span>${escapeHtml(section.name)}</span><b class="later-section-count">0</b><i aria-hidden="true">⌄</i></button><button class="delete-later-section" type="button" data-section-id="${section.id}" aria-label="Удалить раздел «${escapeHtml(section.name)}»">×</button></div><div class="cards"></div></section>`).join('');
+  const defaultHeading = state.laterSections.length
+    ? '<button class="later-section-toggle" type="button" aria-expanded="true"><span>Без раздела</span><b class="later-section-count">0</b><i aria-hidden="true">⌄</i></button>'
+    : '';
+  container.innerHTML = `${sectionMarkup}<section class="later-section later-default drop-zone" data-bucket="deferred" data-label="${state.laterSections.length ? 'Без раздела' : 'Позже'}">${defaultHeading}<div class="cards"></div></section>`;
+  state.laterSections.forEach(section => { bucketLabels[section.bucket] = section.name; });
+  bucketLabels.deferred = state.laterSections.length ? 'Без раздела' : 'Позже';
+  const select = metadataForm.elements.bucket;
+  select.querySelectorAll('option[data-user-section]').forEach(option => option.remove());
+  state.laterSections.forEach(section => {
+    const option = document.createElement('option');
+    option.value = section.bucket; option.textContent = `Позже → ${section.name}`; option.dataset.userSection = 'true';
+    select.append(option);
+  });
+  container.querySelectorAll('.later-section').forEach(bindLaterSection);
+}
+
+const columnOrderKey = 'project-manager.issue-column-order.v2';
+
+function issueColumns() {
+  return [...board.querySelectorAll(':scope > .column')];
+}
+
+function saveColumnOrder() {
+  try {
+    localStorage.setItem(columnOrderKey, JSON.stringify(issueColumns().map(column => column.dataset.column)));
+  } catch (error) {
+    // Reordering remains available when browser storage is disabled.
+  }
+}
+
+function restoreColumnOrder() {
+  try {
+    const order = JSON.parse(localStorage.getItem(columnOrderKey) || '[]');
+    if (!Array.isArray(order)) return;
+    const columns = new Map(issueColumns().map(column => [column.dataset.column, column]));
+    order.forEach(key => { if (columns.has(key)) board.append(columns.get(key)); });
+    columns.forEach(column => { if (!order.includes(column.dataset.column)) board.append(column); });
+  } catch (error) {
+    localStorage.removeItem(columnOrderKey);
+  }
+}
+
+function moveColumn(column, direction) {
+  const sibling = direction === 'left' ? column.previousElementSibling : column.nextElementSibling;
+  if (!sibling) return;
+  if (direction === 'left') board.insertBefore(column, sibling);
+  else board.insertBefore(sibling, column);
+  saveColumnOrder();
+  column.querySelector('header').focus({ preventScroll: true });
+}
+
+restoreColumnOrder();
+issueColumns().forEach(column => {
+  const header = column.querySelector(':scope > header');
+  header.tabIndex = 0;
+  header.addEventListener('dragstart', event => {
+    if (event.target.closest('button')) { event.preventDefault(); return; }
+    state.draggedColumn = column.dataset.column;
+    column.classList.add('column-dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/x-kanban-column', state.draggedColumn);
+  });
+  header.addEventListener('dragend', () => {
+    state.draggedColumn = null;
+    column.classList.remove('column-dragging');
+    issueColumns().forEach(item => item.classList.remove('column-order-target'));
+  });
+  column.addEventListener('dragover', event => {
+    if (!state.draggedColumn || state.draggedColumn === column.dataset.column) return;
+    event.preventDefault();
+    column.classList.add('column-order-target');
+  });
+  column.addEventListener('dragleave', event => {
+    if (!column.contains(event.relatedTarget)) column.classList.remove('column-order-target');
+  });
+  column.addEventListener('drop', event => {
+    if (!state.draggedColumn || state.draggedColumn === column.dataset.column) return;
+    event.preventDefault();
+    const dragged = board.querySelector(`[data-column="${state.draggedColumn}"]`);
+    const box = column.getBoundingClientRect();
+    board.insertBefore(dragged, event.clientX < box.left + box.width / 2 ? column : column.nextElementSibling);
+    column.classList.remove('column-order-target');
+    saveColumnOrder();
+  });
+  column.querySelectorAll('.move-column').forEach(button => {
+    button.addEventListener('click', () => moveColumn(column, button.dataset.direction));
+  });
+});
+
+document.querySelector('.add-later-section').addEventListener('click', async () => {
+  const name = prompt('Название нового раздела в колонке «Позже»:')?.trim();
+  if (!name) return;
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ action: 'saveLaterSection', name, sessid: metadataForm.elements.sessid.value })
+    });
+    const data = await readApiResponse(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка API (${response.status})`);
+    state.laterSections = data.laterSections || [];
+    renderLaterSectionStructure(); render();
+    showToast('Раздел добавлен', data.section.name);
+  } catch (error) { showToast('Не удалось добавить раздел', error.message, true); }
 });
 
 form.addEventListener('submit', async event => {
@@ -671,6 +857,26 @@ document.querySelectorAll('.view-switch button').forEach(button => button.addEve
   document.querySelectorAll('.view-switch button').forEach(item => item.classList.remove('active'));
   button.classList.add('active'); state.view = button.dataset.view; board.classList.toggle('list-view', state.view === 'list');
 }));
+const cardViewStorageKey = 'project-manager.card-view.v1';
+try {
+  state.cardView = localStorage.getItem(cardViewStorageKey) === 'compact' ? 'compact' : 'full';
+} catch (error) {
+  state.cardView = 'full';
+}
+function applyCardView() {
+  board.classList.toggle('compact-cards', state.cardView === 'compact');
+  document.querySelectorAll('.card-view-switch button').forEach(button => {
+    const active = button.dataset.cardView === state.cardView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+document.querySelectorAll('.card-view-switch button').forEach(button => button.addEventListener('click', () => {
+  state.cardView = button.dataset.cardView;
+  try { localStorage.setItem(cardViewStorageKey, state.cardView); } catch (error) { /* The view still works without storage. */ }
+  applyCardView();
+}));
+applyCardView();
 document.querySelector('#reportBtn').addEventListener('click', () => {
   const current = new Date();
   const previous = new Date(); previous.setDate(previous.getDate() - 7);
