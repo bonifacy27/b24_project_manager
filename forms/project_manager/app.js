@@ -428,6 +428,13 @@ function renderHistory(name, title, entries) {
     ? `<strong>${title}</strong><ol>${entries.map(entry => `<li><time>${escapeHtml(entry.week || 'Без недели')} · ${escapeHtml(formatEntryDate(entry.createdAt))}</time><textarea maxlength="10000" data-entry-date="${escapeHtml(entry.createdAt)}" data-entry-week="${escapeHtml(entry.week || '')}">${escapeHtml(entry.text)}</textarea></li>`).join('')}</ol>`
     : `<strong>${title}</strong><p>Записей пока нет.</p>`;
 }
+function updateCompletedWeekField(bucket) {
+  const field = metadataForm.querySelector('.completed-week-field');
+  field.hidden = bucket !== 'completed';
+  if (bucket === 'completed' && !metadataForm.elements.completedWeek.value) {
+    metadataForm.elements.completedWeek.value = isoWeekValue();
+  }
+}
 function openMetadata(issue, bucket = targetColumn(issue)) {
   if (!issue) return;
   metadataForm.reset();
@@ -451,9 +458,8 @@ function openMetadata(issue, bucket = targetColumn(issue)) {
     || (['week', 'next'].includes(bucket) ? weekForBucket(bucket) : '');
   metadataForm.elements.plannedActionWeek.value = metadataForm.elements.plannedWeek.value || isoWeekValue();
   metadataForm.elements.factWeek.value = issue.metadata?.completedWeek || isoWeekValue();
-  const completedWeekField = metadataForm.querySelector('.completed-week-field');
-  completedWeekField.hidden = !issue.metadata?.completedWeek;
-  metadataForm.elements.completedWeekDisplay.value = issue.metadata?.completedWeek || '';
+  metadataForm.elements.completedWeek.value = issue.metadata?.completedWeek || '';
+  updateCompletedWeekField(bucket);
   renderLinkedIssues(issue, canCompleteInJira);
   renderIssueProjects(issue.key);
   renderTagPicker(issue.metadata?.tags || []);
@@ -513,6 +519,7 @@ metadataForm.elements.bucket.addEventListener('change', event => {
   if (['week', 'next'].includes(event.target.value)) {
     metadataForm.elements.plannedWeek.value = weekForBucket(event.target.value);
   }
+  updateCompletedWeekField(event.target.value);
 });
 metadataForm.querySelector('.add-tag button').addEventListener('click', () => {
   const input = metadataForm.elements.newTag;
@@ -1025,7 +1032,10 @@ async function downloadReport(completedWeek, plannedWeek) {
     !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
   const other = scopedIssues.filter(issue =>
-    !includedKeys.has(issue.key) && issue.metadata?.complexity !== 'low'
+    !includedKeys.has(issue.key)
+      && issue.metadata?.complexity !== 'low'
+      && targetColumn(issue) !== 'completed'
+      && !isJiraCompleted(issue.status)
   ).map(issue => {
     const projectNames = state.projects
       .filter(project => project.issueKeys.includes(issue.key))
