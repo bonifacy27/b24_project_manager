@@ -401,8 +401,13 @@ final class IssueMetadataStore
             $weekDate = new \DateTimeImmutable($bucket === 'next' ? '+1 week' : 'today');
             $plannedWeek = $weekDate->format('o-\WW');
         }
-        $completedWeek = (string) ($current['completedWeek'] ?? '');
-        if ($bucket === 'completed' && ($current['bucket'] ?? '') !== 'completed') {
+        $completedWeek = array_key_exists('completedWeek', $input)
+            ? strtoupper(trim((string) $input['completedWeek']))
+            : (string) ($current['completedWeek'] ?? '');
+        if ($completedWeek !== '' && !preg_match('/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/', $completedWeek)) {
+            throw new \InvalidArgumentException('Неверно указана неделя выполнения.');
+        }
+        if ($completedWeek === '' && $bucket === 'completed' && ($current['bucket'] ?? '') !== 'completed') {
             $completedWeek = (new \DateTimeImmutable('today'))->format('o-\WW');
         }
         $tags = array_key_exists('tags', $input)
