@@ -1001,7 +1001,7 @@ async function downloadReport(completedWeek, plannedWeek) {
     actions: entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
     result: entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
   });
-  const reportRows = (issues, planWeek, factWeek) => {
+  const reportRows = (issues, planWeek, factWeek, includeSupportCount = false) => {
     const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
     const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
     if (!supportIssues.length) return detailed;
@@ -1016,7 +1016,7 @@ async function downloadReport(completedWeek, plannedWeek) {
       description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
       jiraDescription: supportIssues.map(issue => `${issue.key}: ${issue.description || '—'}`).join('\n\n'),
       actions: 'Техподдержка',
-      result: 'Выполнено'
+      result: includeSupportCount ? `Выполнено: ${supportIssues.length}` : 'Выполнено'
     });
     return detailed;
   };
@@ -1024,7 +1024,9 @@ async function downloadReport(completedWeek, plannedWeek) {
   const scopedIssues = state.issues.filter(issue =>
     !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
   );
-  const other = scopedIssues.filter(issue => !includedKeys.has(issue.key)).map(issue => {
+  const other = scopedIssues.filter(issue =>
+    !includedKeys.has(issue.key) && issue.metadata?.complexity !== 'low'
+  ).map(issue => {
     const projectNames = state.projects
       .filter(project => project.issueKeys.includes(issue.key))
       .map(project => `${project.name} (${project.year})`);
@@ -1051,7 +1053,7 @@ async function downloadReport(completedWeek, plannedWeek) {
       body: JSON.stringify({
         sessid: reportForm.elements.sessid.value,
         completedRange: weekDateRange(completedWeek), plannedRange: weekDateRange(plannedWeek),
-        completed: reportRows(completed, completedWeek, completedWeek),
+        completed: reportRows(completed, completedWeek, completedWeek, true),
         planned: reportRows(planned, plannedWeek, plannedWeek), other
       })
     });
