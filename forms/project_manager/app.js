@@ -982,7 +982,11 @@ function reportIssues(completedWeek, plannedWeek) {
   );
   return {
     completed: scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek),
-    planned: scopedIssues.filter(issue => issue.metadata?.plannedWeek === plannedWeek && targetColumn(issue) !== 'completed')
+    planned: scopedIssues.filter(issue =>
+      ['week', 'next'].includes(targetColumn(issue))
+      && (issue.metadata?.plannedWeek === plannedWeek
+        || entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length > 0)
+    )
   };
 }
 
