@@ -222,6 +222,30 @@ try {
     }
     $jiraAssignee = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $currentUserLogin) . '"';
 
+    $reportWeek = trim((string) ($_GET['report_week'] ?? ''));
+    if ($reportWeek !== '') {
+        if (!preg_match('/^\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])$/', $reportWeek)) {
+            throw new InvalidArgumentException('Некорректно указана отчётная неделя.');
+        }
+        $metadata = $metadataStore->all();
+        $issueKeys = array_keys(array_filter($metadata, static fn (array $entry): bool =>
+            $entry['completedWeek'] === $reportWeek && preg_match('/^[A-Z][A-Z0-9_]+-\d+$/', $entry['issueKey'])
+        ));
+        foreach (array_chunk($issueKeys, 100) as $keyChunk) {
+            $jql = sprintf(
+                'project in (%s) AND assignee = %s AND key in (%s)',
+                implode(', ', array_map('strtoupper', $projects)), $jiraAssignee, implode(', ', $keyChunk)
+            );
+            $result = $client->search($jql);
+            foreach ($result['issues'] as $issue) {
+                $issue['metadata'] = $metadata[$issue['key']];
+                $issues[] = $issue;
+            }
+        }
+        echo json_encode(['issues' => $issues], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        exit;
+    }
+
     $reportMonth = trim((string) ($_GET['report_month'] ?? ''));
     if ($reportMonth !== '') {
         if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $reportMonth)) {

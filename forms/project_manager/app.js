@@ -13,7 +13,7 @@ const reportDataForm = document.querySelector('#reportDataForm');
 const projectForm = document.querySelector('#projectForm');
 const monthlyReportPage = document.querySelector('#monthlyReportPage');
 const workspacePage = document.querySelector('.project-manager > .content:not(.monthly-report-page)');
-const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', cardView: 'full', draggedKey: null, draggedColumn: null, summaryFilter: 'all', pendingReport: null };
+const state = { issues: [], projects: [], laterSections: [], projectEditingIssues: new Set(), project: 'all', statuses: new Set(), tags: new Set(), tagCatalog: [], creationOptions: {}, query: '', view: 'board', cardView: 'full', draggedKey: null, draggedColumn: null, summaryFilter: 'all', reportCompletionIssues: [], pendingReport: null };
 const apiUrl = new URL(window.location.href);
 apiUrl.search = '';
 apiUrl.hash = '';
@@ -480,6 +480,8 @@ async function saveMetadata(values) {
   if (!response.ok) throw new Error(data.error || `Ошибка сохранения (${response.status})`);
   const issue = findIssue(values.issueKey);
   if (issue) issue.metadata = data.metadata;
+  const reportIssue = state.reportCompletionIssues.find(item => item.key === values.issueKey);
+  if (reportIssue) reportIssue.metadata = data.metadata;
   if (Array.isArray(data.localProjects)) state.projects = data.localProjects;
   updateSummary(); render();
 }
@@ -885,11 +887,19 @@ document.querySelectorAll('.card-view-switch button').forEach(button => button.a
   applyCardView();
 }));
 applyCardView();
+function defaultReportWeeks(date = new Date()) {
+  const completed = new Date(date);
+  if (date.getDay() >= 1 && date.getDay() <= 4) completed.setDate(completed.getDate() - 7);
+  const planned = new Date(completed);
+  planned.setDate(planned.getDate() + 7);
+  return { completedWeek: isoWeekValue(completed), plannedWeek: isoWeekValue(planned) };
+}
+
 document.querySelector('#reportBtn').addEventListener('click', () => {
   const current = new Date();
-  const previous = new Date(); previous.setDate(previous.getDate() - 7);
-  reportForm.elements.completedWeek.value = isoWeekValue(previous);
-  reportForm.elements.plannedWeek.value = isoWeekValue(current);
+  const { completedWeek, plannedWeek } = defaultReportWeeks(current);
+  reportForm.elements.completedWeek.value = completedWeek;
+  reportForm.elements.plannedWeek.value = plannedWeek;
   reportForm.elements.reportMonth.value = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
   reportForm.elements.reportType.value = 'weekly';
   updateReportType();
@@ -906,9 +916,11 @@ function updateReportType() {
   reportForm.querySelector('[type="submit"]').textContent = monthly ? 'Открыть отчёт' : 'Скачать Excel';
   reportModal.querySelector('.report-help').textContent = monthly
     ? 'Ежемесячный отчёт откроется на отдельной странице.'
-    : 'Выберите отдельно неделю итогов и неделю планирования.';
+    : `Итоги за ${weekDateRange(reportForm.elements.completedWeek.value)}. План на ${weekDateRange(reportForm.elements.plannedWeek.value)}.`;
 }
-reportForm.elements.reportType.addEventListener('change', updateReportType);
+for (const name of ['reportType', 'completedWeek', 'plannedWeek']) {
+  reportForm.elements[name].addEventListener('change', updateReportType);
+}
 
 function openMonthlyReportPage() {
   document.querySelector('#monthlyReportMonth').value = reportForm.elements.reportMonth.value;
@@ -976,22 +988,48 @@ document.querySelector('#monthlyReportCopy').addEventListener('click', async () 
   }
   showToast('Отчёт скопирован', 'Весь список помещён в буфер обмена');
 });
-function reportIssues(completedWeek, plannedWeek) {
-  const scopedIssues = state.issues.filter(issue =>
-    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+function isReportIssueCompleted(issue) {
+  return targetColumn(issue) === 'completed' || isJiraCompleted(issue.status);
+}
+
+function weeklyReportScope() {
+  const boardIssues = state.issues.filter(issue => !issue.projectOnly);
+  const boardKeys = new Set(boardIssues.map(issue => issue.key));
+  const historicalCompletions = state.reportCompletionIssues.filter(issue =>
+    !boardKeys.has(issue.key) && isReportIssueCompleted(issue)
   );
+  return [...boardIssues, ...historicalCompletions].filter(issue =>
+    (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
+  );
+}
+
+function reportIssues(completedWeek, plannedWeek) {
+  const scopedIssues = weeklyReportScope();
   return {
-    completed: scopedIssues.filter(issue => issue.metadata?.completedWeek === completedWeek),
-    planned: scopedIssues.filter(issue =>
-      ['week', 'next'].includes(targetColumn(issue))
-      && (issue.metadata?.plannedWeek === plannedWeek
-        || entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length > 0)
-    )
+    completed: scopedIssues.filter(issue => isReportIssueCompleted(issue)
+      ? issue.metadata?.completedWeek === completedWeek
+      : entriesForWeek(issue.metadata?.facts, completedWeek).length > 0),
+    planned: scopedIssues.filter(issue => !isReportIssueCompleted(issue)
+      && entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length > 0)
   };
 }
 
+function missingReportData(completedWeek, plannedWeek) {
+  return weeklyReportScope().flatMap(issue => {
+    const column = targetColumn(issue);
+    const done = isReportIssueCompleted(issue);
+    const completedInWeek = done && issue.metadata?.completedWeek === completedWeek;
+    const hasFact = entriesForWeek(issue.metadata?.facts, completedWeek).length > 0;
+    const fact = !hasFact && ((!done && column === 'week') || (completedInWeek && requiresReportDetails(issue)));
+    const plan = !done && column === 'next' && !entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length;
+    const description = requiresReportDetails(issue) && (completedInWeek || (!done && hasFact))
+      && !issue.metadata?.shortDescription?.trim();
+    return fact || plan || description ? [{ issue, fact, plan, description }] : [];
+  });
+}
+
 function entriesForWeek(entries, week) {
-  return (entries || []).filter(entry => entry.week === week);
+  return (entries || []).filter(entry => entry.week === week && entry.text?.trim());
 }
 
 function requiresReportDetails(issue) {
@@ -1012,9 +1050,13 @@ async function downloadReport(completedWeek, plannedWeek) {
     actions: entriesForWeek(issue.metadata?.plannedActions, planWeek).map(entry => entry.text).join('\n'),
     result: entriesForWeek(issue.metadata?.facts, factWeek).map(entry => entry.text).join('\n')
   });
-  const reportRows = (issues, planWeek, factWeek, includeSupportCount = false) => {
-    const detailed = issues.filter(requiresReportDetails).map(issue => issueRow(issue, planWeek, factWeek));
-    const supportIssues = issues.filter(issue => !requiresReportDetails(issue));
+  const completedRows = () => {
+    const groupAsSupport = issue => isReportIssueCompleted(issue) && !requiresReportDetails(issue)
+      && !entriesForWeek(issue.metadata?.facts, completedWeek).length
+      && !entriesForWeek(issue.metadata?.plannedActions, completedWeek).length;
+    const detailed = completed.filter(issue => !groupAsSupport(issue))
+      .map(issue => issueRow(issue, completedWeek, completedWeek));
+    const supportIssues = completed.filter(groupAsSupport);
     if (!supportIssues.length) return detailed;
     const projects = [...new Set(supportIssues.flatMap(issue => {
       const attached = state.projects.filter(project => project.issueKeys.includes(issue.key)).map(project => project.name);
@@ -1027,19 +1069,15 @@ async function downloadReport(completedWeek, plannedWeek) {
       description: `Техподдержка по проектам ${projects.join(', ') || '—'}`,
       jiraDescription: supportIssues.map(issue => `${issue.key}: ${issue.description || '—'}`).join('\n\n'),
       actions: 'Техподдержка',
-      result: includeSupportCount ? `Выполнено: ${supportIssues.length}` : 'Выполнено'
+      result: `Выполнено: ${supportIssues.length}`
     });
     return detailed;
   };
   const includedKeys = new Set([...completed, ...planned].map(issue => issue.key));
-  const scopedIssues = state.issues.filter(issue =>
-    !issue.projectOnly && (state.project === 'all' || issue.project === state.project) && matchesStatus(issue) && matchesTags(issue)
-  );
-  const other = scopedIssues.filter(issue =>
+  const other = weeklyReportScope().filter(issue =>
     !includedKeys.has(issue.key)
       && issue.metadata?.complexity !== 'low'
-      && targetColumn(issue) !== 'completed'
-      && !isJiraCompleted(issue.status)
+      && !isReportIssueCompleted(issue)
   ).map(issue => {
     const projectNames = state.projects
       .filter(project => project.issueKeys.includes(issue.key))
@@ -1056,7 +1094,7 @@ async function downloadReport(completedWeek, plannedWeek) {
   const submit = reportDataModal.hidden
     ? reportForm.querySelector('[type="submit"]')
     : reportDataForm.querySelector('[type="submit"]');
-  const errorBox = reportForm.querySelector('.form-error');
+  const errorBox = submit.form.querySelector('.form-error');
   submit.disabled = true;
   errorBox.hidden = true;
   try {
@@ -1067,8 +1105,8 @@ async function downloadReport(completedWeek, plannedWeek) {
       body: JSON.stringify({
         sessid: reportForm.elements.sessid.value,
         completedRange: weekDateRange(completedWeek), plannedRange: weekDateRange(plannedWeek),
-        completed: reportRows(completed, completedWeek, completedWeek, true),
-        planned: reportRows(planned, plannedWeek, plannedWeek), other
+        completed: completedRows(),
+        planned: planned.map(issue => issueRow(issue, plannedWeek, plannedWeek)), other
       })
     });
     if (!response.ok) {
@@ -1083,32 +1121,24 @@ async function downloadReport(completedWeek, plannedWeek) {
     showToast('Excel-отчёт сформирован', `Итоги: ${completed.length}, план: ${planned.length}`);
   } catch (error) {
     errorBox.textContent = error.message; errorBox.hidden = false;
-    reportModal.hidden = false;
   } finally {
     submit.disabled = false;
   }
 }
 
 function openReportDataCheck(completedWeek, plannedWeek) {
-  const { completed, planned } = reportIssues(completedWeek, plannedWeek);
-  const missing = new Map();
-  completed.filter(requiresReportDetails).forEach(issue => {
-    const fact = !entriesForWeek(issue.metadata?.facts, completedWeek).length;
-    const description = !issue.metadata?.shortDescription?.trim();
-    if (fact || description) missing.set(issue.key, { issue, fact, plan: false, description });
-  });
-  planned.filter(requiresReportDetails).forEach(issue => {
-    if (!entriesForWeek(issue.metadata?.plannedActions, plannedWeek).length) {
-      const row = missing.get(issue.key) || { issue, fact: false, plan: false, description: false };
-      row.plan = true; missing.set(issue.key, row);
-    }
-  });
-  if (!missing.size) { downloadReport(completedWeek, plannedWeek); return; }
+  const missing = missingReportData(completedWeek, plannedWeek);
+  if (!missing.length) return downloadReport(completedWeek, plannedWeek);
+  reportDataForm.querySelector('.skip').hidden = missing.some(row => row.plan);
+  reportDataForm.querySelector('.form-error').hidden = true;
+  reportDataModal.querySelector('.report-data-help').textContent = missing.some(row => row.plan)
+    ? `Заполните план на ${weekDateRange(plannedWeek)}. При необходимости добавьте факт за ${weekDateRange(completedWeek)}.`
+    : `Дополните данные за ${weekDateRange(completedWeek)} или скачайте отчёт с имеющимися данными.`;
   state.pendingReport = { completedWeek, plannedWeek };
   reportDataForm.querySelector('.report-data-table').innerHTML = `<div class="report-data-row report-data-head">
       <strong>Задача</strong><strong>Дата</strong><strong>Название</strong><strong>Краткое описание</strong>
       <strong>Планируемые действия</strong><strong>Итог</strong>
-    </div>` + [...missing.values()].map(row => {
+    </div>` + missing.map(row => {
     const description = row.issue.metadata?.shortDescription || '';
     const jiraDescription = row.issue.description || 'Описание в Jira не заполнено';
     const existingPlan = entriesForWeek(row.issue.metadata?.plannedActions, plannedWeek).map(entry => entry.text).join('\n');
@@ -1119,25 +1149,45 @@ function openReportDataCheck(completedWeek, plannedWeek) {
       <span>${escapeHtml(formatIssueDate(row.issue.created))}</span>
       <span title="${escapeHtml(row.issue.summary)}">${escapeHtml(truncate(row.issue.summary, 55))}</span>
       ${row.description ? `<label><span class="sr-only">Краткое описание</span><textarea aria-label="Краткое описание" class="quick-description" maxlength="5000"></textarea></label>` : `<span class="report-description" title="${escapeHtml(description)}">${escapeHtml(truncate(description, 85))}</span>`}
-      ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
+      ${row.plan ? `<label><span class="sr-only">План (${escapeHtml(plannedWeek)})</span><textarea aria-label="План ${escapeHtml(plannedWeek)}" class="quick-plan" required maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingPlan || '—')}</span>`}
       ${row.fact ? `<label><span class="sr-only">Факт (${escapeHtml(completedWeek)})</span><textarea aria-label="Факт ${escapeHtml(completedWeek)}" class="quick-fact" maxlength="10000"></textarea></label>` : `<span>${escapeHtml(existingFact || '—')}</span>`}
     </div>`;
   }).join('');
   reportModal.hidden = true; reportDataModal.hidden = false;
 }
 
-reportForm.addEventListener('submit', event => {
+reportForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (reportForm.elements.reportType.value === 'monthly') {
     openMonthlyReportPage();
     return;
   }
-  openReportDataCheck(reportForm.elements.completedWeek.value, reportForm.elements.plannedWeek.value);
+  const completedWeek = reportForm.elements.completedWeek.value;
+  const plannedWeek = reportForm.elements.plannedWeek.value;
+  const submit = reportForm.querySelector('[type="submit"]');
+  const errorBox = reportForm.querySelector('.form-error');
+  submit.disabled = true;
+  errorBox.hidden = true;
+  try {
+    const url = new URL(apiUrl);
+    url.searchParams.set('report_week', completedWeek);
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+    const data = await readApiResponse(response);
+    if (!response.ok) throw new Error(data.error || `Ошибка загрузки задач (${response.status})`);
+    if (reportModal.hidden) return;
+    state.reportCompletionIssues = data.issues;
+    await openReportDataCheck(completedWeek, plannedWeek);
+  } catch (error) {
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
 });
 reportDataModal.querySelector('.modal-close').addEventListener('click', () => { reportDataModal.hidden = true; });
 reportDataModal.addEventListener('click', event => { if (event.target === reportDataModal) reportDataModal.hidden = true; });
 reportDataForm.querySelector('.skip').addEventListener('click', () => {
-  if (state.pendingReport) downloadReport(state.pendingReport.completedWeek, state.pendingReport.plannedWeek);
+  if (state.pendingReport && !reportDataForm.querySelector('[type="submit"]').disabled) downloadReport(state.pendingReport.completedWeek, state.pendingReport.plannedWeek);
 });
 reportDataForm.addEventListener('submit', async event => {
   event.preventDefault();
@@ -1145,20 +1195,34 @@ reportDataForm.addEventListener('submit', async event => {
   const errorBox = reportDataForm.querySelector('.form-error');
   submit.disabled = true; errorBox.hidden = true;
   try {
-    for (const row of reportDataForm.querySelectorAll('.report-data-row')) {
-      const issue = findIssue(row.dataset.key);
-      const plan = row.querySelector('.quick-plan')?.value.trim() || '';
-      const fact = row.querySelector('.quick-fact')?.value.trim() || '';
-      const shortDescription = row.querySelector('.quick-description')?.value.trim() || '';
+    const { completedWeek, plannedWeek } = state.pendingReport;
+    const issues = new Map(weeklyReportScope().map(issue => [issue.key, issue]));
+    const rows = [...reportDataForm.querySelectorAll('.report-data-row[data-key]')];
+    const blankPlan = rows.map(row => row.querySelector('.quick-plan:required'))
+      .find(input => input && !input.value.trim());
+    if (blankPlan) {
+      blankPlan.focus();
+      throw new Error('Заполните планируемые действия для каждой задачи, отмеченной в форме.');
+    }
+    for (const row of rows) {
+      const issue = issues.get(row.dataset.key);
+      if (!issue) throw new Error(`Задача ${row.dataset.key} больше недоступна. Сформируйте отчёт заново.`);
+      const plan = row.querySelector('.quick-plan:not([readonly])')?.value.trim() || '';
+      const fact = row.querySelector('.quick-fact:not([readonly])')?.value.trim() || '';
+      const shortDescription = row.querySelector('.quick-description:not([readonly])')?.value.trim() || '';
       if (!plan && !fact && !shortDescription) continue;
       await saveMetadata({
         issueKey: issue.key, bucket: targetColumn(issue), sessid: metadataForm.elements.sessid.value,
         ...(shortDescription ? { shortDescription } : {}),
-        plannedAction: plan, plannedActionWeek: state.pendingReport.plannedWeek,
-        fact, factWeek: state.pendingReport.completedWeek
+        plannedAction: plan, plannedActionWeek: plannedWeek,
+        fact, factWeek: completedWeek
+      });
+      row.querySelectorAll('textarea').forEach(input => {
+        input.required = false;
+        input.readOnly = true;
       });
     }
-    downloadReport(state.pendingReport.completedWeek, state.pendingReport.plannedWeek);
+    await downloadReport(completedWeek, plannedWeek);
   } catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; }
   finally { submit.disabled = false; }
 });
